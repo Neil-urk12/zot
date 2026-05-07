@@ -19,8 +19,12 @@ type Host interface {
 	SubmitOrQueue(prompt string, images []provider.ImageBlock)
 
 	// CancelTurn aborts the active turn (if any). Called when the
-	// paired Telegram user sends /stop.
+	// paired Telegram user sends /stop or plain "stop".
 	CancelTurn()
+
+	// Status returns the current model, usage, context, and cwd summary
+	// shown when the paired Telegram user sends /status.
+	Status() string
 
 	// Notify pushes a one-shot status line into the chat. Used to
 	// surface bridge events ("connected as @bot", "paired with
@@ -272,9 +276,9 @@ func (b *Bridge) pollLoop(ctx context.Context) {
 
 // handleUpdate applies pairing, gates on the allowed user, decodes
 // the interesting bits (text, caption, image attachments), and
-// forwards them to the Host. Built-in slash commands (/start,
-// /help, /status, /stop) are handled inline without touching the
-// agent.
+// forwards them to the Host. Built-in commands (/start, /help,
+// /status, /stop, and plain "stop") are handled inline without
+// touching the agent.
 func (b *Bridge) handleUpdate(ctx context.Context, u Update) {
 	msg := u.Message
 	if msg == nil {
@@ -329,15 +333,19 @@ func (b *Bridge) handleUpdate(ctx context.Context, u Update) {
 	switch text {
 	case "/start", "/help":
 		_ = b.Client.SendMessage(ctx, msg.Chat.ID,
-			"mirror is active. send me a message and it'll be forwarded to the zot tui. commands: /status, /stop.",
+			"mirror is active. send me a message and it'll be forwarded to the zot tui. commands: /status, /stop, or plain stop.",
 			msg.MessageID)
 		return
 	case "/status":
-		_ = b.Client.SendMessage(ctx, msg.Chat.ID,
-			fmt.Sprintf("mirror active. paired user: %d.", paired),
-			msg.MessageID)
+		_ = b.Client.SendMessage(ctx, msg.Chat.ID, b.Host.Status(), msg.MessageID)
 		return
 	case "/stop":
+		b.Host.CancelTurn()
+		_ = b.Client.SendMessage(ctx, msg.Chat.ID,
+			"cancelled the current turn.", msg.MessageID)
+		return
+	}
+	if isStopCommand(text) {
 		b.Host.CancelTurn()
 		_ = b.Client.SendMessage(ctx, msg.Chat.ID,
 			"cancelled the current turn.", msg.MessageID)

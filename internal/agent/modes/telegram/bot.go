@@ -15,10 +15,13 @@ import (
 // the agent. It is a long-running goroutine; Run blocks until ctx
 // cancels.
 type Bot struct {
-	Client  *Client
-	Agent   *core.Agent
-	Config  Config
-	ZotHome string
+	Client     *Client
+	Agent      *core.Agent
+	Config     Config
+	ZotHome    string
+	Provider   string
+	AuthMethod string
+	CWD        string
 	// Save persists cfg to bot.json. Called whenever the bot pairs
 	// with a new allowed user or advances LastUpdateID.
 	Save func(Config) error
@@ -28,10 +31,11 @@ type Bot struct {
 	// agent.ResolveCredentialFull which auto-refreshes expired tokens.
 	RefreshCreds func() error
 
-	mu        sync.Mutex
-	busy      bool
-	activeCtx context.CancelFunc
-	queue     []queuedTurn
+	mu           sync.Mutex
+	busy         bool
+	activeCtx    context.CancelFunc
+	queue        []queuedTurn
+	lastCtxInput int
 }
 
 // queuedTurn is an inbound DM waiting to become a prompt.
@@ -144,21 +148,17 @@ func (b *Bot) handleUpdate(ctx context.Context, u Update) error {
 	switch text {
 	case "/start", "/help":
 		_ = b.Client.SendMessage(ctx, msg.Chat.ID,
-			"send me any message and i'll forward it to zot. attach an image and i'll pass it to the model. commands: /status, /stop.",
+			"send me any message and i'll forward it to zot. attach an image and i'll pass it to the model. commands: /status, /stop, or plain stop.",
 			msg.MessageID)
 		return nil
 	case "/status":
 		return b.sendStatus(ctx, msg.Chat.ID, msg.MessageID)
 	case "/stop":
-		b.mu.Lock()
-		cancel := b.activeCtx
-		b.mu.Unlock()
-		if cancel != nil {
-			cancel()
-			_ = b.Client.SendMessage(ctx, msg.Chat.ID, "cancelled the current turn.", msg.MessageID)
-		} else {
-			_ = b.Client.SendMessage(ctx, msg.Chat.ID, "nothing running.", msg.MessageID)
-		}
+		b.cancelActiveTurn(ctx, msg.Chat.ID, msg.MessageID)
+		return nil
+	}
+	if isStopCommand(text) {
+		b.cancelActiveTurn(ctx, msg.Chat.ID, msg.MessageID)
 		return nil
 	}
 
@@ -247,6 +247,12 @@ func (b *Bot) runTurn(ctx context.Context, t queuedTurn) {
 		switch e := ev.(type) {
 		case core.EvTextDelta:
 			replyBuilder.WriteString(e.Delta)
+		case core.EvUsage:
+			b.mu.Lock()
+			if e.Usage.InputTokens > 0 {
+				b.lastCtxInput = e.Usage.InputTokens + e.Usage.CacheReadTokens + e.Usage.CacheWriteTokens
+			}
+			b.mu.Unlock()
 		case core.EvAssistantMessage:
 			var sb strings.Builder
 			for _, c := range e.Message.Content {
@@ -308,26 +314,45 @@ func (b *Bot) startTyping(ctx context.Context, chatID int64) func() {
 	return cancel
 }
 
+func (b *Bot) cancelActiveTurn(ctx context.Context, chatID int64, replyTo int) {
+	b.mu.Lock()
+	cancel := b.activeCtx
+	b.mu.Unlock()
+	if cancel != nil {
+		cancel()
+		_ = b.Client.SendMessage(ctx, chatID, "cancelled the current turn.", replyTo)
+	} else {
+		_ = b.Client.SendMessage(ctx, chatID, "nothing running.", replyTo)
+	}
+}
+
 // sendStatus describes agent state to the Telegram user.
 func (b *Bot) sendStatus(ctx context.Context, chatID int64, replyTo int) error {
 	b.mu.Lock()
 	busy := b.busy
 	queued := len(b.queue)
+	ctxUsed := b.lastCtxInput
+	providerName := b.Provider
+	authMethod := b.AuthMethod
+	cwd := b.CWD
 	b.mu.Unlock()
 
-	state := "idle"
-	if busy {
-		state = "working"
+	model := b.Agent.Model
+	ctxMax := 0
+	if m, err := provider.FindModel(providerName, model); err == nil {
+		ctxMax = m.ContextWindow
 	}
-	lines := []string{
-		fmt.Sprintf("state: %s", state),
-		fmt.Sprintf("queued: %d", queued),
-		fmt.Sprintf("model: %s", b.Agent.Model),
-	}
-	cost := b.Agent.Cost()
-	lines = append(lines, fmt.Sprintf("cost: $%.4f (%d in / %d out)",
-		cost.CostUSD, cost.InputTokens, cost.OutputTokens))
-	return b.Client.SendMessage(ctx, chatID, strings.Join(lines, "\n"), replyTo)
+	return b.Client.SendMessage(ctx, chatID, FormatStatus(StatusSnapshot{
+		Provider:     providerName,
+		Model:        model,
+		CWD:          cwd,
+		Usage:        b.Agent.Cost(),
+		Subscription: authMethod == "oauth",
+		ContextUsed:  ctxUsed,
+		ContextMax:   ctxMax,
+		Busy:         busy,
+		Queued:       queued,
+	}), replyTo)
 }
 
 // download fetches a file from Telegram and returns bytes + mime.

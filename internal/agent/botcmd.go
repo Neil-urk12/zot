@@ -362,11 +362,15 @@ func botRun(rawTail []string, version string) error {
 		}
 	}
 
-	b := &telegram.Bot{
-		Client:  telegram.NewClient(cfg.BotToken),
-		Agent:   agent,
-		Config:  cfg,
-		ZotHome: ZotHome(),
+	var b *telegram.Bot
+	b = &telegram.Bot{
+		Client:     telegram.NewClient(cfg.BotToken),
+		Agent:      agent,
+		Config:     cfg,
+		ZotHome:    ZotHome(),
+		Provider:   resolved.Provider,
+		AuthMethod: resolved.AuthMethod,
+		CWD:        args.CWD,
 		Save: func(c telegram.Config) error {
 			return telegram.SaveConfig(ZotHome(), c)
 		},
@@ -381,6 +385,9 @@ func botRun(rawTail []string, version string) error {
 			}
 			agent.Client = next.NewClient()
 			agent.Model = next.Model
+			b.Provider = next.Provider
+			b.AuthMethod = next.AuthMethod
+			b.CWD = next.CWD
 			return nil
 		},
 	}

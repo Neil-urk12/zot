@@ -2131,6 +2131,7 @@ func (i *Interactive) CancelTurn() {
 	i.mu.Unlock()
 	if cancel != nil {
 		cancel()
+		i.confirmDialog.CancelAll("turn cancelled")
 	}
 }
 
@@ -3855,6 +3856,35 @@ func (h *telegramHost) SubmitOrQueue(prompt string, images []provider.ImageBlock
 }
 
 func (h *telegramHost) CancelTurn() { h.iv.CancelTurn() }
+
+func (h *telegramHost) Status() string {
+	h.iv.mu.Lock()
+	providerName := h.iv.cfg.Provider
+	model := h.iv.cfg.Model
+	cwd := h.iv.cfg.CWD
+	usage := h.iv.cumUsage
+	subscription := h.iv.cfg.AuthMethod == "oauth"
+	ctxUsed := h.iv.lastCtxInput
+	busy := h.iv.busy
+	queued := len(h.iv.queued)
+	h.iv.mu.Unlock()
+
+	ctxMax := 0
+	if m, err := provider.FindModel(providerName, model); err == nil {
+		ctxMax = m.ContextWindow
+	}
+	return telegram.FormatStatus(telegram.StatusSnapshot{
+		Provider:     providerName,
+		Model:        model,
+		CWD:          cwd,
+		Usage:        usage,
+		Subscription: subscription,
+		ContextUsed:  ctxUsed,
+		ContextMax:   ctxMax,
+		Busy:         busy,
+		Queued:       queued,
+	})
+}
 
 func (h *telegramHost) Notify(level, message string) {
 	h.iv.mu.Lock()
