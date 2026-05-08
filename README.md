@@ -146,7 +146,7 @@ zot --help
 | `--no-ext` | Skip extension discovery for this run. `--ext` still works on top, so `--no-ext --ext ./x` runs only `x`. |
 | `--with-skills` | Also load user-installed skills. Without this, only the built-in skills shipped in the binary are loaded. |
 | `--no-skill` | Disable all skills, including built-ins. No `skill` tool is registered and the system prompt has no skill manifest. |
-| `--no-yolo` | Confirm every tool call before it runs (interactive TUI only). A dialog shows the tool name and a one-line preview of its args with four choices: yes, yes-always-this-tool-this-session, yes-always-this-session, no. Ignored with a stderr warning in print / json / rpc modes, where tools still run freely so scripts and automation keep working. Type `/yolo` in the TUI to disable the gate for the rest of the session. |
+| `--no-yolo` | Confirm every tool call before it runs (interactive TUI only). A dialog shows the tool name and a one-line preview of its args with four choices: yes, yes-always-this-tool-this-session, yes-always-this-session, no. Ignored with a stderr warning in print / json / rpc modes, where tools still run freely so scripts and automation keep working. |
 
 ## Tools
 
@@ -193,7 +193,6 @@ Type `/` in the TUI to open the autocomplete popup. Available commands:
 | `/jail` | Confine tools to the current directory. |
 | `/unjail` | Allow tools to touch paths outside again. |
 | `/reload-ext` | Hot-reload all extensions (re-read manifests, respawn subprocesses, rebuild tool registry). |
-| `/yolo` | Turn off `--no-yolo` confirmation for the rest of this session. |
 | `/telegram` | Connect, disconnect, or show status of the Telegram bridge (takes `connect` / `disconnect` / `status` as an optional argument; opens a picker without one). When connected, DMs from the paired user become prompts in the running session and the assistant's replies are mirrored back to Telegram. Alias: `/tg`. |
 | `/clear` | Clear the chat transcript. |
 | `/exit` | Exit zot. |

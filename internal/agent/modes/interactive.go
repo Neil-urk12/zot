@@ -2388,8 +2388,6 @@ func (i *Interactive) runSlash(ctx context.Context, cmd string) (done bool) {
 		i.mu.Unlock()
 	case "/reload-ext":
 		i.runReloadExt(ctx)
-	case "/yolo":
-		i.runYoloOn()
 	case "/telegram", "/tg":
 		if len(parts) >= 2 {
 			i.doTelegram(parts[1])
@@ -3601,31 +3599,6 @@ func (i *Interactive) Confirm(toolName string, preview string) core.ConfirmDecis
 	})
 	i.invalidate()
 	return <-resp
-}
-
-// runYoloOn disables --no-yolo for the rest of the session. Tool
-// calls run without prompting after this; there's intentionally no
-// way to re-enable gating mid-session, if the user wants that back
-// they can exit and restart with --no-yolo.
-func (i *Interactive) runYoloOn() {
-	if i.cfg.ConfirmGate == nil {
-		i.mu.Lock()
-		i.statusOK = "yolo mode is already on (no --no-yolo in this session)"
-		i.statusErr = ""
-		i.mu.Unlock()
-		i.invalidate()
-		return
-	}
-	i.cfg.ConfirmGate.AllowAll()
-	// Also auto-allow any currently pending confirmation so the
-	// agent doesn't deadlock if /yolo is typed while a prompt is
-	// open.
-	i.confirmDialog.AllowAllPending()
-	i.mu.Lock()
-	i.statusOK = "yolo engaged: no more tool-call confirmations this session"
-	i.statusErr = ""
-	i.mu.Unlock()
-	i.invalidate()
 }
 
 // openTelegramDialog shows the picker for `/telegram` with no arg.
