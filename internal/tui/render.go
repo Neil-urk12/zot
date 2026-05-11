@@ -79,7 +79,9 @@ func (r *Renderer) Resize(cols, rows int) {
 			// Clear both screen and scrollback so stale content from
 			// the old width doesn't bleed through. Move to (1,1) so
 			// the next DrawLog/writeFull starts from a clean slate.
-			_, _ = io.WriteString(r.out, SeqDeleteKittyImages+SeqClearScreen+SeqClearScrollback+MoveTo(1, 1))
+			// Use the no-home variant: the explicit MoveTo below sets
+			// the cursor without triggering VS Code's viewport-snap.
+			_, _ = io.WriteString(r.out, SeqDeleteKittyImages+SeqClearScreenNoHome+SeqClearScrollback+MoveTo(1, 1))
 		}
 	}
 }
@@ -97,7 +99,7 @@ func (r *Renderer) Clear() {
 	r.logViewportTop = 0
 	r.logHardwareRow = 0
 	r.logInit = false
-	_, _ = io.WriteString(r.out, SeqDeleteKittyImages+SeqClearScreen+SeqClearScrollback+MoveTo(1, 1))
+	_, _ = io.WriteString(r.out, SeqDeleteKittyImages+SeqClearScreenNoHome+SeqClearScrollback+MoveTo(1, 1))
 }
 
 // Invalidate forces a full repaint on the next Draw without clearing the
@@ -334,7 +336,7 @@ func (r *Renderer) DrawLog(chat, bottom []string, cursorBottomRow, cursorCol int
 	writeFull := func(clear bool) {
 		if clear {
 			w.WriteString(SeqDeleteKittyImages)
-			w.WriteString(SeqClearScreen)
+			w.WriteString(SeqClearScreenNoHome)
 			w.WriteString(SeqClearScrollback)
 			w.WriteString(MoveTo(1, 1))
 		}

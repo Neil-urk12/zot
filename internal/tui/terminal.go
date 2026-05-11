@@ -86,6 +86,14 @@ const (
 	SeqHideCursor        = "\x1b[?25l"
 	SeqShowCursor        = "\x1b[?25h"
 	SeqClearScreen       = "\x1b[2J\x1b[H"
+	// SeqClearScreenNoHome is SeqClearScreen without the trailing
+	// cursor-home (\x1b[H). Use it whenever a MoveTo(...) follows
+	// immediately. VS Code's integrated terminal interprets a bare
+	// CUP-no-args during a clear as "snap the viewport scrollbar to
+	// row 0", which makes the user's scroll position jump on every
+	// repaint. The explicit MoveTo we emit afterwards positions the
+	// cursor identically without triggering that snap.
+	SeqClearScreenNoHome = "\x1b[2J"
 	SeqClearScrollback   = "\x1b[3J"
 	SeqClearLine         = "\x1b[2K"
 	SeqResetScrollRegion = "\x1b[r"
