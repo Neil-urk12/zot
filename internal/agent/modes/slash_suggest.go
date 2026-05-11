@@ -121,12 +121,13 @@ func (s *slashSuggester) allCatalog() []slashCommand {
 // baseCatalog returns the built-in commands visible for the current
 // interactive state.
 func (s *slashSuggester) baseCatalog() []slashCommand {
+	hide := "/unjail"
 	if s.jailed {
-		return slashCatalog
+		hide = "/jail"
 	}
 	out := make([]slashCommand, 0, len(slashCatalog)-1)
 	for _, c := range slashCatalog {
-		if c.Name == "/unjail" {
+		if c.Name == hide {
 			continue
 		}
 		out = append(out, c)
