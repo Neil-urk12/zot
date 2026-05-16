@@ -31,6 +31,7 @@ func TestSwarmEmitterMirrorDormantUntilStdoutBreaks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create stdout file: %v", err)
 	}
+	defer stdoutFile.Close()
 
 	// Mirror writes go to a separate events.jsonl that we can read
 	// at the end to assert how many events the mirror emitted.
@@ -39,6 +40,7 @@ func TestSwarmEmitterMirrorDormantUntilStdoutBreaks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open mirror: %v", err)
 	}
+	defer mirror.Close()
 
 	em := newSwarmEmitter(stdoutFile, mirror)
 

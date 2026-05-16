@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"syscall"
 	"testing"
@@ -18,6 +19,9 @@ import (
 // can't use it.
 func shortSocketDir(t *testing.T) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("swarm inbox transport uses Unix-domain sockets; Windows support will use a named-pipe backend")
+	}
 	dir, err := os.MkdirTemp("/tmp", "zot-in-")
 	if err != nil {
 		t.Fatalf("mkdir: %v", err)

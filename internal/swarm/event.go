@@ -234,6 +234,7 @@ type EventFollower struct {
 	interval time.Duration
 	out      chan Event
 	done     chan struct{}
+	closed   chan struct{}
 	once     sync.Once
 }
 
@@ -249,6 +250,7 @@ func FollowEventLog(path string, interval time.Duration) *EventFollower {
 		interval: interval,
 		out:      make(chan Event, 256),
 		done:     make(chan struct{}),
+		closed:   make(chan struct{}),
 	}
 	go f.loop()
 	return f
@@ -257,14 +259,18 @@ func FollowEventLog(path string, interval time.Duration) *EventFollower {
 // Events returns the receive end of the event stream.
 func (f *EventFollower) Events() <-chan Event { return f.out }
 
-// Close stops polling and closes the events channel.
+// Close stops polling and closes the events channel. It waits for
+// the polling goroutine to exit so tests on Windows can remove the
+// temp directory without racing an open file handle.
 func (f *EventFollower) Close() {
 	f.once.Do(func() {
 		close(f.done)
+		<-f.closed
 	})
 }
 
 func (f *EventFollower) loop() {
+	defer close(f.closed)
 	defer close(f.out)
 	var offset int64
 	tick := time.NewTicker(f.interval)
