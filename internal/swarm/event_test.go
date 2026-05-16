@@ -171,6 +171,7 @@ func TestFollowerEmitsNewEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
+	defer log.Close()
 	if err := log.Append(NewEvent("preexisting", nil)); err != nil {
 		t.Fatalf("append: %v", err)
 	}
