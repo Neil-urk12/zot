@@ -1019,9 +1019,13 @@ func (i *Interactive) redraw() {
 	// in flight. Shown directly above the status bar so they're close
 	// to the editor but don't push the chat around.
 	var queue []string
-	if len(i.queued) > 0 {
+	queued := append([]string(nil), i.queued...)
+	if i.agent != nil {
+		queued = append(queued, i.agent.PendingQueuedMessages()...)
+	}
+	if len(queued) > 0 {
 		queue = append(queue, "")
-		for _, q := range i.queued {
+		for _, q := range queued {
 			label := i.cfg.Theme.FG256(i.cfg.Theme.Accent, "  sliding in: ")
 			text := truncateLine(q, cols-17)
 			queue = append(queue, label+i.cfg.Theme.FG256(i.cfg.Theme.Muted, text))
@@ -1701,10 +1705,18 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		// follow-up messages); a second press within ctrlCExitWindow
 		// exits. With both an empty editor and no queue the first
 		// press still just arms — require a deliberate double-tap.
-		hadInput := !i.ed.IsEmpty() || len(i.queued) > 0
+		ag := i.agent
+		pending := 0
+		if ag != nil {
+			pending = ag.QueuedMessageCount()
+		}
+		hadInput := !i.ed.IsEmpty() || len(i.queued) > 0 || pending > 0
 		if hadInput {
 			i.ed.Clear()
 			i.suggest.Reset()
+			if ag != nil {
+				ag.DrainQueuedMessages()
+			}
 			i.mu.Lock()
 			i.queued = nil
 			i.statusOK = "input cleared"
@@ -1792,10 +1804,18 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		// the keypress falls through to the normal scroll behavior.
 		if k.Alt {
 			i.mu.Lock()
-			if n := len(i.queued); n > 0 {
-				text := i.queued[n-1]
-				i.queued = i.queued[:n-1]
-				i.mu.Unlock()
+			var text string
+			if i.agent != nil {
+				text, _ = i.agent.PopQueuedMessage()
+			}
+			if text == "" {
+				if n := len(i.queued); n > 0 {
+					text = i.queued[n-1]
+					i.queued = i.queued[:n-1]
+				}
+			}
+			i.mu.Unlock()
+			if text != "" {
 				i.ed.SetValue(text)
 				i.inputHistoryIndex = -1
 				i.invalidate()
@@ -1978,17 +1998,24 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		if i.telegramBridge != nil && i.telegramBridge.Active() {
 			go i.telegramBridge.OnUserTyped(text)
 		}
-		// If a turn is already in flight, queue this prompt instead of
-		// starting a second one. The drain loop at the end of startTurn
-		// will pick it up when the current turn finishes.
+		// If a turn is already in flight, queue this prompt inside the
+		// agent loop so it is delivered at the next safe model-call
+		// boundary instead of waiting for the whole run to finish.
 		i.mu.Lock()
-		if i.busy {
-			i.queued = append(i.queued, text)
-			i.mu.Unlock()
+		busy := i.busy
+		ag := i.agent
+		i.mu.Unlock()
+		if busy {
+			if ag != nil {
+				ag.QueueMessage(text)
+			} else {
+				i.mu.Lock()
+				i.queued = append(i.queued, text)
+				i.mu.Unlock()
+			}
 			i.invalidate()
 			return false
 		}
-		i.mu.Unlock()
 		i.startTurn(ctx, text)
 	}
 	return false
@@ -2179,8 +2206,15 @@ func (i *Interactive) SubmitOrQueue(text string, images []provider.ImageBlock) {
 	}
 	if i.busy {
 		// Queue text only; images are dropped for queued prompts.
-		i.queued = append(i.queued, text)
+		ag := i.agent
 		i.mu.Unlock()
+		if ag != nil {
+			ag.QueueMessage(text)
+		} else {
+			i.mu.Lock()
+			i.queued = append(i.queued, text)
+			i.mu.Unlock()
+		}
 		i.invalidate()
 		return
 	}
@@ -2404,13 +2438,20 @@ func (i *Interactive) runSlash(ctx context.Context, cmd string) (done bool) {
 		// typing the prompt by hand.
 		const studyPrompt = "Read and understand everything in the current directory."
 		i.mu.Lock()
-		if i.busy {
-			i.queued = append(i.queued, studyPrompt)
-			i.mu.Unlock()
+		busy := i.busy
+		ag := i.agent
+		i.mu.Unlock()
+		if busy {
+			if ag != nil {
+				ag.QueueMessage(studyPrompt)
+			} else {
+				i.mu.Lock()
+				i.queued = append(i.queued, studyPrompt)
+				i.mu.Unlock()
+			}
 			i.invalidate()
 			break
 		}
-		i.mu.Unlock()
 		i.startTurn(ctx, studyPrompt)
 	case "/jail":
 		if i.cfg.Sandbox == nil {
@@ -3136,10 +3177,16 @@ func (i *Interactive) runCompact(parent context.Context, auto bool) {
 				i.statusOK = "compaction cancelled"
 			}
 			i.queued = nil // drop queue on cancel
+			if i.agent != nil {
+				i.agent.DrainQueuedMessages()
+			}
 		case err != nil:
 			i.statusErr = "compaction failed: " + err.Error()
 			i.statusOK = ""
 			i.queued = nil // drop queue on error
+			if i.agent != nil {
+				i.agent.DrainQueuedMessages()
+			}
 		default:
 			i.statusErr = ""
 			// Read token count from the compaction message meta.
@@ -3327,11 +3374,19 @@ func (i *Interactive) startTurnWithImages(parent context.Context, prompt string,
 		// user isn't bombarded with stale messages after an interrupt.
 		if ctx.Err() != nil || err != nil {
 			i.queued = nil
+			if i.agent != nil {
+				i.agent.DrainQueuedMessages()
+			}
 		}
 		// Decide whether the next thing to do is an auto-compaction.
-		// Only fires when the turn completed cleanly AND the queue is
-		// empty (otherwise a queued message would race the condense).
-		shouldAutoCompact := !hasNext && err == nil && ctx.Err() == nil && i.shouldAutoCompactLocked()
+		// Only fires when the turn completed cleanly AND no host-side
+		// or agent-side queued messages are waiting (otherwise a queued
+		// message would race the condense).
+		agentQueued := 0
+		if i.agent != nil {
+			agentQueued = i.agent.QueuedMessageCount()
+		}
+		shouldAutoCompact := !hasNext && agentQueued == 0 && err == nil && ctx.Err() == nil && i.shouldAutoCompactLocked()
 		i.mu.Unlock()
 		i.invalidate()
 		parent := i.runCtx

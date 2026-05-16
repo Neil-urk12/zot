@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,6 +82,13 @@ type Agent struct {
 	// every keypress.
 	rev  uint64
 	cost CostTracker
+
+	// queued holds user messages submitted while the agent is busy.
+	// The loop appends them as normal user messages at safe
+	// boundaries: before the next model call after a tool batch, or
+	// after a text-only assistant turn finishes. It never interrupts
+	// a running tool or cancels an in-flight provider request.
+	queued []string
 }
 
 // NewAgent returns an Agent with sensible defaults.
@@ -91,6 +99,89 @@ func NewAgent(client provider.Client, model, system string, tools Registry) *Age
 		System:   system,
 		Tools:    tools,
 		MaxSteps: 0, // 0 = unlimited
+	}
+}
+
+// QueueMessage queues text to be injected as a user message at the
+// next safe boundary of the active agent loop. It is non-blocking in
+// the sense that it never waits for model/tool work; it only takes
+// the transcript mutex briefly. Empty/whitespace-only messages are
+// ignored.
+func (a *Agent) QueueMessage(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	a.mu.Lock()
+	a.queued = append(a.queued, text)
+	a.mu.Unlock()
+	return true
+}
+
+// PendingQueuedMessages returns a snapshot of user messages waiting
+// to be injected. Used by hosts to render the visible "sliding in"
+// chips without consuming them.
+func (a *Agent) PendingQueuedMessages() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]string, len(a.queued))
+	copy(out, a.queued)
+	return out
+}
+
+// QueuedMessageCount returns the number of messages waiting to be
+// injected at the next safe boundary.
+func (a *Agent) QueuedMessageCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.queued)
+}
+
+// PopQueuedMessage removes and returns the most recently queued
+// message. Hosts use this for the slide-back keybinding.
+func (a *Agent) PopQueuedMessage() (string, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	n := len(a.queued)
+	if n == 0 {
+		return "", false
+	}
+	text := a.queued[n-1]
+	a.queued = a.queued[:n-1]
+	return text, true
+}
+
+// DrainQueuedMessages discards and returns every queued message.
+// Hosts use this on explicit cancel/clear so stale follow-ups do
+// not run after the user aborted the turn.
+func (a *Agent) DrainQueuedMessages() []string {
+	return a.drainQueuedMessages()
+}
+
+func (a *Agent) drainQueuedMessages() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]string, len(a.queued))
+	copy(out, a.queued)
+	a.queued = nil
+	return out
+}
+
+func (a *Agent) appendQueuedAsUser(texts []string, sink func(AgentEvent)) {
+	for _, text := range texts {
+		msg := provider.Message{
+			Role:    provider.RoleUser,
+			Content: []provider.Content{provider.TextBlock{Text: text}},
+			Time:    time.Now(),
+		}
+		a.mu.Lock()
+		a.messages = append(a.messages, msg)
+		a.rev++
+		a.mu.Unlock()
+		a.fireMessageAppended(msg)
+		if sink != nil {
+			sink(EvUserMessage{Message: msg})
+		}
 	}
 }
 
@@ -208,6 +299,15 @@ func (a *Agent) wrapSink(sink func(AgentEvent)) func(AgentEvent) {
 
 func (a *Agent) runLoop(ctx context.Context, sink func(AgentEvent)) error {
 	for step := 1; a.MaxSteps <= 0 || step <= a.MaxSteps; step++ {
+		// Messages queued while the agent was busy are delivered
+		// before the next model call. This is the safe boundary:
+		// any previous tool batch has already completed and its
+		// results have been appended, but no new provider request has
+		// started yet.
+		if pending := a.drainQueuedMessages(); len(pending) > 0 {
+			a.appendQueuedAsUser(pending, sink)
+		}
+
 		sink(EvTurnStart{Step: step})
 		if a.BeforeTurn != nil {
 			if allowed, reason := a.BeforeTurn(step); !allowed {
@@ -257,6 +357,14 @@ func (a *Agent) runLoop(ctx context.Context, sink func(AgentEvent)) error {
 				return err
 			}
 			_ = hadError
+			continue
+		}
+
+		// If the assistant stopped without tool calls but a message was
+		// queued while it was speaking, loop once more so that message
+		// is appended and answered instead of waiting until a later
+		// top-level prompt.
+		if ctx.Err() == nil && a.QueuedMessageCount() > 0 {
 			continue
 		}
 
