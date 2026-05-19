@@ -57,6 +57,13 @@ type btwDialog struct {
 
 	// Theme cached so render() doesn't need it threaded through.
 	theme tui.Theme
+
+	// cwd is the working directory used to resolve relative paths
+	// when the user presses Tab on a path-like token in the side-
+	// chat editor. Set by Open() from the host's cwd so the same
+	// path-completion that works in the main editor also works
+	// here.
+	cwd string
 }
 
 func newBtwDialog() *btwDialog {
@@ -93,7 +100,7 @@ func (d *btwDialog) Loading() bool {
 // auto-submitted (so /btw <text> starts a conversation right away).
 // invalidate, if non-nil, is called after each state change so the
 // host redraw loop can pick up the update without polling.
-func (d *btwDialog) Open(th tui.Theme, agent *core.Agent, system, model, seed string, invalidate func()) {
+func (d *btwDialog) Open(th tui.Theme, agent *core.Agent, system, model, cwd, seed string, invalidate func()) {
 	d.mu.Lock()
 	d.active = true
 	d.theme = th
@@ -105,6 +112,7 @@ func (d *btwDialog) Open(th tui.Theme, agent *core.Agent, system, model, seed st
 	d.frozenMsgs = agent.Messages()
 	d.client = agent.Client
 	d.model = model
+	d.cwd = cwd
 	d.mu.Unlock()
 
 	if seed = strings.TrimSpace(seed); seed != "" {
@@ -157,9 +165,18 @@ func (d *btwDialog) HandleKey(k tui.Key, invalidate func()) (closed bool) {
 	d.mu.Lock()
 	editor := d.editor
 	loading := d.loading
+	cwd := d.cwd
 	d.mu.Unlock()
 	if editor == nil {
 		return false
+	}
+	// Tab-complete a path-like token before the editor sees the key,
+	// matching the main editor's behaviour.
+	if k.Kind == tui.KeyTab {
+		if tryPathTabCompleteEditor(editor, cwd) {
+			invalidate()
+			return false
+		}
 	}
 	// Don't accept new submissions while a call is in flight; arrow
 	// keys / scrolling still flow through to the editor for caret

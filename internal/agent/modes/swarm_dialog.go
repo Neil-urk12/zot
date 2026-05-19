@@ -766,6 +766,15 @@ func (d *swarmDialog) handlePromptKey(k tui.Key) (closed bool, msg, errMsg strin
 		return false, "", ""
 	}
 
+	// Tab-complete a path-like token before the editor sees the key,
+	// matching the main editor's behaviour. Skipped above by the
+	// @-picker branch when its popup is active.
+	if k.Kind == tui.KeyTab {
+		if tryPathTabCompleteEditor(ed, d.cwd) {
+			return false, "", ""
+		}
+	}
+
 	if submitted := ed.HandleKey(k); submitted {
 		text := strings.TrimRight(ed.SubmitValue(), "\n")
 		text = expandFileChips(text, d.cwd)
@@ -884,6 +893,15 @@ func (d *swarmDialog) handleSpawnKey(k tui.Key) (closed bool, msg, errMsg string
 		d.newTaskEd = nil
 		d.fileSuggest = nil
 		return false, "", ""
+	}
+
+	// Tab-complete a path-like token before the editor sees the key,
+	// matching the main editor's behaviour. Skipped above by the
+	// @-picker branch when its popup is active.
+	if k.Kind == tui.KeyTab {
+		if tryPathTabCompleteEditor(ed, d.cwd) {
+			return false, "", ""
+		}
 	}
 
 	if submitted := ed.HandleKey(k); submitted {

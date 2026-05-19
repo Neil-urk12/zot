@@ -2412,27 +2412,34 @@ func buildStudyPrompt(arg, cwd string) string {
 	return "Read and understand everything in the directory " + display + "."
 }
 
-// tryPathTabComplete looks at the editor's current value, finds the
-// path-like token immediately before the cursor (in this codebase the
-// cursor is always at the end of the buffer after a keystroke, so
-// "before the cursor" is the trailing non-whitespace run), and rewrites
-// it to its shell-style completion against the filesystem.
+// tryPathTabCompleteEditor looks at ed's current value, finds the
+// path-like token immediately before the cursor (the cursor is always
+// at the end of the buffer after a keystroke, so "before the cursor"
+// is the trailing non-whitespace run), and rewrites it to its shell-
+// style completion against the filesystem.
 //
 // Returns true when it consumed the Tab keystroke (token recognised,
 // completion attempted — even if no candidates matched, the keystroke
 // is still consumed so it doesn't insert a literal tab character).
-// Returns false when the token doesn't look like a path; the caller
-// then lets Tab fall through to its normal no-op.
+// Returns false when the token doesn't look like a path; callers then
+// let Tab fall through to its normal no-op.
 //
 // Recognised path shapes:
 //   - ~ or ~/foo                  expanded via os.UserHomeDir()
 //   - /abs/path or /abs/path/foo  absolute
-//   - ./foo, ../foo, foo/bar      relative to i.cfg.CWD
+//   - ./foo, ../foo, foo/bar      relative to cwd
 //
 // A bare word like "hello" is not treated as a path so plain text
 // keeps Tab as a literal no-op.
-func (i *Interactive) tryPathTabComplete() bool {
-	val := i.ed.Value()
+//
+// Free function (not a method) so the same logic runs against the
+// editor instances owned by btwDialog and swarmDialog without each
+// dialog needing its own copy.
+func tryPathTabCompleteEditor(ed *tui.Editor, cwd string) bool {
+	if ed == nil {
+		return false
+	}
+	val := ed.Value()
 	// Find the trailing run of non-whitespace.
 	start := len(val)
 	for start > 0 {
@@ -2451,7 +2458,7 @@ func (i *Interactive) tryPathTabComplete() bool {
 	}
 
 	// Resolve the absolute parent directory + base prefix to match.
-	parentAbs, basePrefix, displayParent, ok := resolvePathTabToken(token, i.cfg.CWD)
+	parentAbs, basePrefix, displayParent, ok := resolvePathTabToken(token, cwd)
 	if !ok {
 		return true
 	}
@@ -2498,9 +2505,19 @@ func (i *Interactive) tryPathTabComplete() bool {
 		newToken += "/"
 	}
 
-	i.ed.SetValue(val[:start] + newToken)
-	i.invalidate()
+	ed.SetValue(val[:start] + newToken)
 	return true
+}
+
+// tryPathTabComplete is the Interactive-bound convenience wrapper.
+// It calls the free helper against the main editor and invalidates
+// the frame on a successful rewrite.
+func (i *Interactive) tryPathTabComplete() bool {
+	if tryPathTabCompleteEditor(i.ed, i.cfg.CWD) {
+		i.invalidate()
+		return true
+	}
+	return false
 }
 
 // looksLikePathToken reports whether tok is shaped like a filesystem
@@ -2990,7 +3007,7 @@ func (i *Interactive) openBtwDialog(args []string) {
 		return
 	}
 	seed := strings.TrimSpace(strings.Join(args, " "))
-	i.btwDialog.Open(i.cfg.Theme, i.agent, i.agent.System, i.cfg.Model, seed, i.invalidate)
+	i.btwDialog.Open(i.cfg.Theme, i.agent, i.agent.System, i.cfg.Model, i.cfg.CWD, seed, i.invalidate)
 	i.invalidate()
 }
 
