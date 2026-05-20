@@ -162,6 +162,7 @@ type Listener struct {
 	active net.Conn
 	out    chan string
 	done   chan struct{}
+	wg     sync.WaitGroup
 }
 
 // Listen creates the socket at path and starts accepting. The
@@ -215,7 +216,10 @@ func (l *Listener) Close() error {
 }
 
 func (l *Listener) acceptLoop() {
-	defer close(l.out)
+	defer func() {
+		l.wg.Wait()
+		close(l.out)
+	}()
 	for {
 		c, err := l.ln.Accept()
 		if err != nil {
@@ -234,7 +238,11 @@ func (l *Listener) acceptLoop() {
 		}
 		l.active = c
 		l.mu.Unlock()
-		go l.readLoop(c)
+		l.wg.Add(1)
+		go func() {
+			defer l.wg.Done()
+			l.readLoop(c)
+		}()
 	}
 }
 
