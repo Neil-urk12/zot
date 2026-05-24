@@ -69,7 +69,15 @@ func TestGeminiStreamHappyPath(t *testing.T) {
 }
 
 func TestGeminiStreamInlineImage(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prev) })
 	img := base64.StdEncoding.EncodeToString([]byte("png-bytes"))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "text/event-stream")
