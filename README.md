@@ -1,11 +1,18 @@
-<img src="internal/assets/zot-logo.png" alt="zot" width="130" height="130" />
+<div align="center">
+  <a href="https://www.zot.sh">
+    <img src="internal/assets/zot-logo.png" alt="zot coding agent harness" width="130" height="130" />
+  </a>
+</div>
+<p align="center">
+  <a href="https://www.zot.sh">zot.sh</a>
+</p>
 
-# zot
+## What is it?
 
 Yet another coding agent harness, lightweight and written (vibe-slopped) in go.
 
 - one static binary.
-- built-in providers for anthropic, openai/codex, kimi, deepseek, google gemini, and ollama/openai-compatible local models.
+- built-in providers for Anthropic, OpenAI/Codex/Responses, Kimi, DeepSeek, Google Gemini/Vertex, GitHub Copilot, Bedrock, Azure OpenAI, OpenRouter, Groq, Cerebras, xAI, Together, Hugging Face, Mistral, Moonshot, Z.AI, Xiaomi, MiniMax, Fireworks, Vercel AI Gateway, OpenCode, Cloudflare AI, and Ollama/local models.
 - four tools (read, write, edit, bash).
 - three run modes (interactive tui, print, json).
 - built-in telegram bot.
@@ -61,7 +68,7 @@ The easiest way is to just run `zot` and type `/login`. The TUI opens even witho
 ### Credential lookup order
 
 1. `--api-key` flag
-2. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `KIMI_API_KEY`, `MOONSHOT_API_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, or `GOOGLE_API_KEY` env var
+2. provider-specific env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `KIMI_API_KEY`, `MOONSHOT_API_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY`, `CEREBRAS_API_KEY`, `TOGETHER_API_KEY`, `HF_TOKEN`, `ZAI_API_KEY`, `XIAOMI_API_KEY`, `MINIMAX_API_KEY`, `FIREWORKS_API_KEY`, `AI_GATEWAY_API_KEY`, `COPILOT_GITHUB_TOKEN`, `GITHUB_COPILOT_TOKEN`, and others for provider-specific backends)
 3. `$ZOT_HOME/auth.json` (API key or OAuth token; mode 0600)
 
 `$ZOT_HOME` defaults to:
@@ -73,18 +80,19 @@ The easiest way is to just run `zot` and type `/login`. The TUI opens even witho
 
 Run `zot` and type `/login`. Pick one of two methods:
 
-- **API key**: a small local web server starts on `127.0.0.1:<free-port>`, your browser opens a form, you paste your `sk-ant-...`, `sk-...`, Kimi/Moonshot key, DeepSeek (`sk-...`) key, or Google AI Studio (`AIza...`) Gemini key. zot probes the provider once and saves it to `auth.json` if accepted.
-- **Subscription**: use your Claude Pro/Max, ChatGPT Plus/Pro, or Kimi Code subscription. DeepSeek and Google Gemini do **not** have a subscription login path — the `/login subscription` step only lists Anthropic, OpenAI, and Kimi. For DeepSeek and Google use the API-key flow.
+- **API key**: a small local web server starts on `127.0.0.1:<free-port>`, your browser opens a form, you pick a provider from the full API-key provider list, paste the key, and zot saves it to `auth.json` if accepted. Providers with a lightweight model-list endpoint are probed before saving; provider backends that need extra project/account env vars are saved directly.
+- **Subscription**: use your Claude Pro/Max, ChatGPT Plus/Pro, Kimi Code, or GitHub Copilot subscription. DeepSeek and Google Gemini do **not** have a subscription login path. For those, use the API-key flow.
   - Anthropic and OpenAI pin the browser callback to fixed provider-specific ports (`localhost:53692` for Anthropic, `localhost:1455` for OpenAI) because those are the only ports their auth servers will redirect to.
   - Anthropic uses the Claude Code OAuth flow. Messages go to `api.anthropic.com` with a bearer token and the Claude Code identity headers.
   - OpenAI uses the Codex CLI OAuth flow. Messages go to `chatgpt.com/backend-api/codex/responses` with the `chatgpt-account-id` extracted from the returned id_token.
   - Kimi uses the Kimi Code device-code OAuth flow. zot opens the verification URL, polls until you approve it in the browser, then sends messages to `api.kimi.com/coding/v1` with the Kimi Code identity headers.
+  - GitHub Copilot uses GitHub's device-code login flow. zot stores the GitHub access token and exchanges it for short-lived Copilot inference tokens on demand.
 
-> **Note on subscription login.** The OAuth client IDs used are the ones published in Anthropic's Claude Code CLI, OpenAI's Codex CLI, and Kimi Code CLI. Reusing them from a third-party tool may be against their terms of service and may be revoked at any time. Use it at your own risk; the API-key flow is the safe default.
+> **Note on subscription login.** The OAuth client IDs used are the ones published in Anthropic's Claude Code CLI, OpenAI's Codex CLI, Kimi Code CLI, and GitHub Copilot's device-code flow. Reusing them from a third-party tool may be against their terms of service and may be revoked at any time. Use it at your own risk; the API-key flow is the safe default.
 
 ### Token refresh
 
-OAuth access tokens are short-lived (Anthropic ~8h, OpenAI ~30d). zot refreshes them automatically:
+OAuth access tokens are short-lived (Anthropic ~8h, OpenAI ~30d; Kimi and GitHub Copilot also use refresh/exchange flows). zot refreshes or exchanges them automatically:
 
 - At every credential lookup, zot checks the stored `expiry` and, if past it (with a 60s safety margin), hits the provider's `oauth/token` endpoint with the stored `refresh_token`, persists the new `access_token`, `refresh_token`, and `expiry` back to `auth.json`, and hands the fresh token to the client.
 - The telegram bridge additionally refreshes once per turn so a bot that runs for days keeps working without manual intervention.
@@ -127,7 +135,7 @@ zot --help
 
 | Flag | Description |
 |---|---|
-| `--provider anthropic\|openai\|kimi\|deepseek\|google\|ollama` | Pick the provider. |
+| `--provider <id>` | Pick the provider (for example `anthropic`, `openai`, `openai-codex`, `kimi`, `google`, `github-copilot`, `groq`, `openrouter`, `amazon-bedrock`, `ollama`; see Providers). |
 | `--model <id>` | Pick the model (see `--list-models`). |
 | `--api-key <key>` | Override the API key. |
 | `--base-url <url>` | Override the provider base URL (tests, self-hosted). |
@@ -181,7 +189,7 @@ Type `/` in the TUI to open the autocomplete popup. Available commands:
 |---|---|
 | `/help` | Show key bindings and commands. |
 | `/login` | Log in via API key or subscription (opens a dialog). |
-| `/logout [provider]` | Clear credentials for `anthropic`, `openai`, `kimi`, `deepseek`, `google`, or all when omitted. `/logout kimi` also disables fallback to the official Kimi Code CLI token until you log in to Kimi through zot again. |
+| `/logout [provider]` | Clear credentials for any logged-in provider, or all when omitted. `/logout openai-codex` clears ChatGPT/Codex subscription auth while preserving a public OpenAI API key; `/logout kimi` also disables fallback to the official Kimi Code CLI token until you log in to Kimi through zot again. |
 | `/model` | Pick a model from a list (or `/model <id>` to set directly). |
 | `/sessions` | Resume a previous session for this directory. |
 | `/session` | Four ops on the current session: `export` to a portable `.zotsession` file, `import` one back in, `fork` from a past user message into a new branch, `tree` to switch between branches. Opens a picker without an argument; direct forms: `/session export [path]`, `/session import <path>`, `/session fork`, `/session tree`. Default export destination is `~/Downloads`. |
@@ -298,11 +306,22 @@ This is a guardrail against accidents, not a hard security boundary. If you need
 
 Every interactive or print/json run (unless `--no-session`) writes a JSONL transcript under `$ZOT_HOME/sessions/<cwd-hash>/`. Resume any of them with `--continue`, `--resume`, `--session <path>`, or interactively via `/sessions` inside the TUI. Empty sessions (the user exited without prompting) are deleted on close so the list stays tidy.
 
+## Providers
+
+zot's built-in provider catalog includes:
+
+- **Subscription-capable**: Anthropic Claude Pro/Max (`anthropic`), OpenAI Codex / ChatGPT Plus/Pro (`openai-codex`), Kimi Code (`kimi`), GitHub Copilot (`github-copilot`).
+- **Direct API providers**: Anthropic, OpenAI Chat Completions, OpenAI Responses, DeepSeek, Google Gemini, Kimi/Moonshot, Moonshot CN, Groq, Cerebras, xAI, Together AI, Hugging Face Router, OpenRouter, Mistral, Z.AI, Xiaomi/MiMo token-plan regions, MiniMax global/CN, Fireworks, Vercel AI Gateway, OpenCode/OpenCode Go.
+- **Cloud/platform providers**: Amazon Bedrock, Google Vertex AI, Azure OpenAI, Cloudflare Workers AI, Cloudflare AI Gateway.
+- **Local/compatible**: Ollama and OpenAI-compatible local endpoints via `--base-url`.
+
+Use `/login` to store API keys or subscription credentials. `/model` only shows models from providers that are currently available from env vars, `auth.json`, Kimi CLI fallback, or local Ollama.
+
 ## Models
 
-`--list-models` or the `/model` picker shows the full catalog. Three sources:
+`--list-models` or the `/model` picker shows the full catalog across all built-in providers. Three sources:
 
-- **Catalog**: models baked into zot, always available.
+- **Catalog**: models baked into zot, covering Claude, GPT/Codex, Gemini/Gemma, Kimi/Moonshot, DeepSeek, Groq-hosted Llama/Gemma/Compound, OpenRouter-routed models, Bedrock model ids, Vertex model ids, Azure OpenAI deployments, Copilot models, and other provider-specific catalog entries.
 - **Live**: IDs discovered from `GET /v1/models` using your stored API key (cached for 6h in `$ZOT_HOME/models-cache.json`, refreshed in the background on startup).
 - **Speculative**: IDs that appear in the upstream generator but aren't live on the public API yet. They'll 404 today and start working the moment the provider ships them.
 
@@ -344,7 +363,7 @@ Place a `models.json` in `$ZOT_HOME` (macOS: `~/Library/Application Support/zot/
 
 Supported fields per model: `id` (required), `name`, `reasoning`, `contextWindow`, `maxTokens`, `baseUrl`, `priceInput`, `priceOutput`, `priceCacheRead`, `priceCacheWrite`.
 
-Provider keys are normalized: `openai-codex` and `openai-responses` map to `openai`, `anthropic-messages` maps to `anthropic`, `moonshot`, `moonshot-ai`, and `kimi-code` map to `kimi`, and `deepseek-chat` and `deepseek-ai` map to `deepseek`.
+Provider keys are normalized: `openai-codex` and `openai-responses` map to `openai`, `anthropic-messages` maps to `anthropic`, `moonshot`, `moonshot-ai`, and `kimi-code` map to `kimi`, and `deepseek-chat` and `deepseek-ai` map to `deepseek`. Built-in provider ids such as `groq`, `openrouter`, `github-copilot`, `amazon-bedrock`, `google-vertex`, `azure-openai-responses`, `fireworks`, `vercel-ai-gateway`, `mistral`, and `xai` can also be used directly.
 
 User-defined models show `source: user` in `--list-models` and take precedence over both the baked-in catalog and live-discovered models. Missing or invalid files are silently ignored.
 
