@@ -45,51 +45,51 @@ type Model struct {
 var Catalog = []Model{
 	// ---- Anthropic / Claude 4.x ----
 	{
-		Provider: "anthropic", ID: "claude-sonnet-4-5", DisplayName: "Claude Sonnet 4.5",
+		Provider: "anthropic", ID: "claude-sonnet-4-5", DisplayName: "Claude Sonnet 4.5 (latest)",
 		ContextWindow: 200000, MaxOutput: 64000, Reasoning: true,
-		PriceInput: 3.00, PriceOutput: 15.00, PriceCacheRead: 0.30, PriceCacheWrite: 3.75,
+		PriceInput: 3, PriceOutput: 15, PriceCacheRead: 0.3, PriceCacheWrite: 3.75,
 	},
 	{
-		Provider: "anthropic", ID: "claude-opus-4-1", DisplayName: "Claude Opus 4.1",
+		Provider: "anthropic", ID: "claude-opus-4-1", DisplayName: "Claude Opus 4.1 (latest)",
 		ContextWindow: 200000, MaxOutput: 32000, Reasoning: true,
-		PriceInput: 15.00, PriceOutput: 75.00, PriceCacheRead: 1.50, PriceCacheWrite: 18.75,
+		PriceInput: 15, PriceOutput: 75, PriceCacheRead: 1.5, PriceCacheWrite: 18.75,
 	},
 	{
-		Provider: "anthropic", ID: "claude-opus-4-0", DisplayName: "Claude Opus 4",
+		Provider: "anthropic", ID: "claude-opus-4-0", DisplayName: "Claude Opus 4 (latest)",
 		ContextWindow: 200000, MaxOutput: 32000, Reasoning: true,
-		PriceInput: 15.00, PriceOutput: 75.00, PriceCacheRead: 1.50, PriceCacheWrite: 18.75,
+		PriceInput: 15, PriceOutput: 75, PriceCacheRead: 1.5, PriceCacheWrite: 18.75,
 	},
 	{
-		Provider: "anthropic", ID: "claude-sonnet-4-0", DisplayName: "Claude Sonnet 4",
+		Provider: "anthropic", ID: "claude-sonnet-4-0", DisplayName: "Claude Sonnet 4 (latest)",
 		ContextWindow: 200000, MaxOutput: 64000, Reasoning: true,
-		PriceInput: 3.00, PriceOutput: 15.00, PriceCacheRead: 0.30, PriceCacheWrite: 3.75,
+		PriceInput: 3, PriceOutput: 15, PriceCacheRead: 0.3, PriceCacheWrite: 3.75,
 	},
 	{
-		Provider: "anthropic", ID: "claude-haiku-4-5", DisplayName: "Claude Haiku 4.5",
+		Provider: "anthropic", ID: "claude-haiku-4-5", DisplayName: "Claude Haiku 4.5 (latest)",
 		ContextWindow: 200000, MaxOutput: 64000, Reasoning: true,
-		PriceInput: 1.00, PriceOutput: 5.00, PriceCacheRead: 0.10, PriceCacheWrite: 1.25,
+		PriceInput: 1, PriceOutput: 5, PriceCacheRead: 0.1, PriceCacheWrite: 1.25,
 	},
 
 	// ---- Anthropic / Claude 3.x (legacy) ----
 	{
 		Provider: "anthropic", ID: "claude-3-7-sonnet-20250219", DisplayName: "Claude Sonnet 3.7",
 		ContextWindow: 200000, MaxOutput: 64000, Reasoning: true,
-		PriceInput: 3.00, PriceOutput: 15.00, PriceCacheRead: 0.30, PriceCacheWrite: 3.75,
+		PriceInput: 3, PriceOutput: 15, PriceCacheRead: 0.3, PriceCacheWrite: 3.75,
 	},
 	{
 		Provider: "anthropic", ID: "claude-3-5-sonnet-20241022", DisplayName: "Claude Sonnet 3.5 v2",
 		ContextWindow: 200000, MaxOutput: 8192, Reasoning: false,
-		PriceInput: 3.00, PriceOutput: 15.00, PriceCacheRead: 0.30, PriceCacheWrite: 3.75,
+		PriceInput: 3, PriceOutput: 15, PriceCacheRead: 0.3, PriceCacheWrite: 3.75,
 	},
 	{
-		Provider: "anthropic", ID: "claude-3-5-haiku-latest", DisplayName: "Claude Haiku 3.5",
+		Provider: "anthropic", ID: "claude-3-5-haiku-latest", DisplayName: "Claude Haiku 3.5 (latest)",
 		ContextWindow: 200000, MaxOutput: 8192, Reasoning: false,
-		PriceInput: 0.80, PriceOutput: 4.00, PriceCacheRead: 0.08, PriceCacheWrite: 1.00,
+		PriceInput: 0.8, PriceOutput: 4, PriceCacheRead: 0.08, PriceCacheWrite: 1,
 	},
 	{
 		Provider: "anthropic", ID: "claude-3-opus-20240229", DisplayName: "Claude Opus 3",
 		ContextWindow: 200000, MaxOutput: 4096, Reasoning: false,
-		PriceInput: 15.00, PriceOutput: 75.00, PriceCacheRead: 1.50, PriceCacheWrite: 18.75,
+		PriceInput: 15, PriceOutput: 75, PriceCacheRead: 1.5, PriceCacheWrite: 18.75,
 	},
 
 	// ---- DeepSeek ----
@@ -99,24 +99,24 @@ var Catalog = []Model{
 	// (multimodal parts: image_url) in addition to text.
 	{
 		Provider: "deepseek", ID: "deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro",
-		ContextWindow: 128000, MaxOutput: 8192, Reasoning: true,
-		PriceInput: 0.55, PriceOutput: 2.19, PriceCacheRead: 0.14,
-		BaseURL: "https://api.deepseek.com/v1",
+		ContextWindow: 1000000, MaxOutput: 384000, Reasoning: true,
+		PriceInput: 0.435, PriceOutput: 0.87, PriceCacheRead: 0.003625,
+		BaseURL: "https://api.deepseek.com",
 	},
 	{
 		Provider: "deepseek", ID: "deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash",
-		ContextWindow: 128000, MaxOutput: 8192, Reasoning: false,
-		PriceInput: 0.27, PriceOutput: 1.10, PriceCacheRead: 0.07,
-		BaseURL: "https://api.deepseek.com/v1",
+		ContextWindow: 1000000, MaxOutput: 384000, Reasoning: true,
+		PriceInput: 0.14, PriceOutput: 0.28, PriceCacheRead: 0.0028,
+		BaseURL: "https://api.deepseek.com",
 	},
 
 	// ---- Kimi / Kimi Code ----
 	// Anthropic-messages on https://api.kimi.com/coding (no /v1 suffix;
 	// the Anthropic client appends /v1/messages itself).
 	{
-		Provider: "kimi", ID: "kimi-for-coding", DisplayName: "Kimi-k2.6",
-		ContextWindow: 262144, MaxOutput: 32000, Reasoning: true,
-		PriceInput: 0, PriceOutput: 0, PriceCacheRead: 0, PriceCacheWrite: 0,
+		Provider: "kimi", ID: "kimi-for-coding", DisplayName: "Kimi For Coding",
+		ContextWindow: 262144, MaxOutput: 32768, Reasoning: true,
+		PriceInput: 0, PriceOutput: 0, PriceCacheRead: 0,
 		BaseURL: "https://api.kimi.com/coding",
 	},
 
@@ -124,122 +124,120 @@ var Catalog = []Model{
 	{
 		Provider: "openai", ID: "gpt-5", DisplayName: "GPT-5",
 		ContextWindow: 400000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 1.25, PriceOutput: 10.00, PriceCacheRead: 0.125,
+		PriceInput: 1.25, PriceOutput: 10, PriceCacheRead: 0.125,
 	},
 	{
-		Provider: "openai", ID: "gpt-5-mini", DisplayName: "GPT-5 mini",
+		Provider: "openai", ID: "gpt-5-mini", DisplayName: "GPT-5 Mini",
 		ContextWindow: 400000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 0.25, PriceOutput: 2.00, PriceCacheRead: 0.025,
+		PriceInput: 0.25, PriceOutput: 2, PriceCacheRead: 0.025,
 	},
 	{
-		Provider: "openai", ID: "gpt-5-nano", DisplayName: "GPT-5 nano",
+		Provider: "openai", ID: "gpt-5-nano", DisplayName: "GPT-5 Nano",
 		ContextWindow: 400000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 0.05, PriceOutput: 0.40, PriceCacheRead: 0.005,
+		PriceInput: 0.05, PriceOutput: 0.4, PriceCacheRead: 0.005,
 	},
 
 	// ---- OpenAI / GPT-4.1 family ----
 	{
 		Provider: "openai", ID: "gpt-4.1", DisplayName: "GPT-4.1",
 		ContextWindow: 1047576, MaxOutput: 32768, Reasoning: false,
-		PriceInput: 2.00, PriceOutput: 8.00, PriceCacheRead: 0.50,
+		PriceInput: 2, PriceOutput: 8, PriceCacheRead: 0.5,
 	},
 	{
 		Provider: "openai", ID: "gpt-4.1-mini", DisplayName: "GPT-4.1 mini",
 		ContextWindow: 1047576, MaxOutput: 32768, Reasoning: false,
-		PriceInput: 0.40, PriceOutput: 1.60, PriceCacheRead: 0.10,
+		PriceInput: 0.4, PriceOutput: 1.6, PriceCacheRead: 0.1,
 	},
 	{
 		Provider: "openai", ID: "gpt-4.1-nano", DisplayName: "GPT-4.1 nano",
 		ContextWindow: 1047576, MaxOutput: 32768, Reasoning: false,
-		PriceInput: 0.10, PriceOutput: 0.40, PriceCacheRead: 0.03,
+		PriceInput: 0.1, PriceOutput: 0.4, PriceCacheRead: 0.03,
 	},
 
 	// ---- OpenAI / GPT-4o family ----
 	{
 		Provider: "openai", ID: "gpt-4o", DisplayName: "GPT-4o",
 		ContextWindow: 128000, MaxOutput: 16384, Reasoning: false,
-		PriceInput: 2.50, PriceOutput: 10.00, PriceCacheRead: 1.25,
+		PriceInput: 2.5, PriceOutput: 10, PriceCacheRead: 1.25,
 	},
 	{
 		Provider: "openai", ID: "gpt-4o-mini", DisplayName: "GPT-4o mini",
 		ContextWindow: 128000, MaxOutput: 16384, Reasoning: false,
-		PriceInput: 0.15, PriceOutput: 0.60, PriceCacheRead: 0.08,
+		PriceInput: 0.15, PriceOutput: 0.6, PriceCacheRead: 0.08,
 	},
 
 	// ---- OpenAI / reasoning models ----
 	{
 		Provider: "openai", ID: "o4-mini", DisplayName: "o4-mini",
 		ContextWindow: 200000, MaxOutput: 100000, Reasoning: true,
-		PriceInput: 1.10, PriceOutput: 4.40, PriceCacheRead: 0.275,
+		PriceInput: 1.1, PriceOutput: 4.4, PriceCacheRead: 0.28,
 	},
 	{
 		Provider: "openai", ID: "o3", DisplayName: "o3",
 		ContextWindow: 200000, MaxOutput: 100000, Reasoning: true,
-		PriceInput: 2.00, PriceOutput: 8.00, PriceCacheRead: 0.50,
+		PriceInput: 2, PriceOutput: 8, PriceCacheRead: 0.5,
 	},
 	{
 		Provider: "openai", ID: "o3-mini", DisplayName: "o3-mini",
 		ContextWindow: 200000, MaxOutput: 100000, Reasoning: true,
-		PriceInput: 1.10, PriceOutput: 4.40, PriceCacheRead: 0.55,
+		PriceInput: 1.1, PriceOutput: 4.4, PriceCacheRead: 0.55,
 	},
 	{
 		Provider: "openai", ID: "o1", DisplayName: "o1",
 		ContextWindow: 200000, MaxOutput: 100000, Reasoning: true,
-		PriceInput: 15.00, PriceOutput: 60.00, PriceCacheRead: 7.50,
+		PriceInput: 15, PriceOutput: 60, PriceCacheRead: 7.5,
 	},
 
 	// ---- Google / Gemini ----
 	{
 		Provider: "google", ID: "gemini-2.5-pro", DisplayName: "Gemini 2.5 Pro",
-		ContextWindow: 1_048_576, MaxOutput: 65536, Reasoning: true,
-		PriceInput: 1.25, PriceOutput: 10.00, PriceCacheRead: 0.31, PriceCacheWrite: 0,
+		ContextWindow: 1048576, MaxOutput: 65536, Reasoning: true,
+		PriceInput: 1.25, PriceOutput: 10, PriceCacheRead: 0.125,
 	},
 	{
 		Provider: "google", ID: "gemini-2.5-flash", DisplayName: "Gemini 2.5 Flash",
-		ContextWindow: 1_048_576, MaxOutput: 65536, Reasoning: true,
-		PriceInput: 0.30, PriceOutput: 2.50, PriceCacheRead: 0.075, PriceCacheWrite: 0,
+		ContextWindow: 1048576, MaxOutput: 65536, Reasoning: true,
+		PriceInput: 0.3, PriceOutput: 2.5, PriceCacheRead: 0.03,
 	},
 	{
 		Provider: "google", ID: "gemini-2.5-flash-lite", DisplayName: "Gemini 2.5 Flash-Lite",
-		ContextWindow: 1_048_576, MaxOutput: 65536, Reasoning: true,
-		PriceInput: 0.10, PriceOutput: 0.40, PriceCacheRead: 0.025, PriceCacheWrite: 0,
+		ContextWindow: 1048576, MaxOutput: 65536, Reasoning: true,
+		PriceInput: 0.1, PriceOutput: 0.4, PriceCacheRead: 0.01,
 	},
 	{
 		Provider: "google", ID: "gemini-2.0-flash", DisplayName: "Gemini 2.0 Flash",
-		ContextWindow: 1_048_576, MaxOutput: 8192, Reasoning: false,
-		PriceInput: 0.10, PriceOutput: 0.40, PriceCacheRead: 0.025, PriceCacheWrite: 0,
+		ContextWindow: 1048576, MaxOutput: 8192, Reasoning: false,
+		PriceInput: 0.1, PriceOutput: 0.4, PriceCacheRead: 0.025,
 	},
 	{
 		Provider: "google", ID: "gemini-2.0-flash-lite", DisplayName: "Gemini 2.0 Flash-Lite",
-		ContextWindow: 1_048_576, MaxOutput: 8192, Reasoning: false,
-		PriceInput: 0.075, PriceOutput: 0.30, PriceCacheRead: 0, PriceCacheWrite: 0,
+		ContextWindow: 1048576, MaxOutput: 8192, Reasoning: false,
+		PriceInput: 0.075, PriceOutput: 0.3, PriceCacheRead: 0,
 	},
 
 	// ---- Speculative: Anthropic ----
 	{
-		Provider: "anthropic", ID: "claude-opus-4-5", DisplayName: "Claude Opus 4.5",
-		// 200k ctx / 64k maxOutput per Anthropic's published sizing
-		// for the opus-4-5 family; the 1M context is a 4.6+ thing.
+		Provider: "anthropic", ID: "claude-opus-4-5", DisplayName: "Claude Opus 4.5 (latest)",
 		ContextWindow: 200000, MaxOutput: 64000, Reasoning: true,
-		PriceInput: 5.00, PriceOutput: 25.00, PriceCacheRead: 0.50, PriceCacheWrite: 6.25,
+		PriceInput: 5, PriceOutput: 25, PriceCacheRead: 0.5, PriceCacheWrite: 6.25,
 		Speculative: true,
 	},
 	{
 		Provider: "anthropic", ID: "claude-opus-4-6", DisplayName: "Claude Opus 4.6",
 		ContextWindow: 1000000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 5.00, PriceOutput: 25.00, PriceCacheRead: 0.50, PriceCacheWrite: 6.25,
+		PriceInput: 5, PriceOutput: 25, PriceCacheRead: 0.5, PriceCacheWrite: 6.25,
 		Speculative: true,
 	},
 	{
 		Provider: "anthropic", ID: "claude-opus-4-7", DisplayName: "Claude Opus 4.7",
 		ContextWindow: 1000000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 5.00, PriceOutput: 25.00, PriceCacheRead: 0.50, PriceCacheWrite: 6.25,
+		PriceInput: 5, PriceOutput: 25, PriceCacheRead: 0.5, PriceCacheWrite: 6.25,
 		Speculative: true,
 	},
 	{
 		Provider: "anthropic", ID: "claude-sonnet-4-6", DisplayName: "Claude Sonnet 4.6",
 		ContextWindow: 1000000, MaxOutput: 64000, Reasoning: true,
-		PriceInput: 3.00, PriceOutput: 15.00, PriceCacheRead: 0.30, PriceCacheWrite: 3.75,
+		PriceInput: 3, PriceOutput: 15, PriceCacheRead: 0.3, PriceCacheWrite: 3.75,
 		Speculative: true,
 	},
 
@@ -248,46 +246,32 @@ var Catalog = []Model{
 	// represented separately below as provider "openai-codex".
 	{
 		Provider: "openai", ID: "gpt-5.1", DisplayName: "GPT-5.1",
-		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 1.25, PriceOutput: 10.00, PriceCacheRead: 0.125,
+		ContextWindow: 400000, MaxOutput: 128000, Reasoning: true,
+		PriceInput: 1.25, PriceOutput: 10, PriceCacheRead: 0.13,
 		Speculative: true,
 	},
 	{
 		Provider: "openai", ID: "gpt-5.2", DisplayName: "GPT-5.2",
-		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 1.75, PriceOutput: 14.00, PriceCacheRead: 0.175,
-		Speculative: true,
-	},
-	{
-		Provider: "openai", ID: "gpt-5.3", DisplayName: "GPT-5.3",
-		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 1.75, PriceOutput: 14.00, PriceCacheRead: 0.175,
+		ContextWindow: 400000, MaxOutput: 128000, Reasoning: true,
+		PriceInput: 1.75, PriceOutput: 14, PriceCacheRead: 0.175,
 		Speculative: true,
 	},
 	{
 		Provider: "openai", ID: "gpt-5.4", DisplayName: "GPT-5.4",
-		// ContextWindow: 272k across every route we support (OpenAI
-		// direct API and the ChatGPT Codex OAuth backend).
 		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 2.50, PriceOutput: 15.00, PriceCacheRead: 0.25,
+		PriceInput: 2.5, PriceOutput: 15, PriceCacheRead: 0.25,
 		Speculative: true,
 	},
 	{
 		Provider: "openai", ID: "gpt-5.4-mini", DisplayName: "GPT-5.4 mini",
 		ContextWindow: 400000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 0.75, PriceOutput: 4.50, PriceCacheRead: 0.075,
+		PriceInput: 0.75, PriceOutput: 4.5, PriceCacheRead: 0.075,
 		Speculative: true,
 	},
 	{
 		Provider: "openai", ID: "gpt-5.5", DisplayName: "GPT-5.5",
-		ContextWindow: 400000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 2.50, PriceOutput: 15.00, PriceCacheRead: 0.25,
-		Speculative: true,
-	},
-	{
-		Provider: "openai", ID: "gpt-5.5-mini", DisplayName: "GPT-5.5 mini",
-		ContextWindow: 400000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 0.75, PriceOutput: 4.50, PriceCacheRead: 0.075,
+		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
+		PriceInput: 5, PriceOutput: 30, PriceCacheRead: 0.5,
 		Speculative: true,
 	},
 
@@ -295,45 +279,39 @@ var Catalog = []Model{
 	// Same model ids as the OpenAI family, but routed through the
 	// ChatGPT Codex OAuth backend rather than api.openai.com.
 	{
-		Provider: "openai-codex", ID: "gpt-5.2", DisplayName: "GPT-5.2 Codex",
+		Provider: "openai-codex", ID: "gpt-5.2", DisplayName: "GPT-5.2",
 		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 1.75, PriceOutput: 14.00, PriceCacheRead: 0.175,
+		PriceInput: 1.75, PriceOutput: 14, PriceCacheRead: 0.175,
 		Speculative: true,
 	},
 	{
 		Provider: "openai-codex", ID: "gpt-5.3-codex", DisplayName: "GPT-5.3 Codex",
 		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 1.75, PriceOutput: 14.00, PriceCacheRead: 0.175,
+		PriceInput: 1.75, PriceOutput: 14, PriceCacheRead: 0.175,
 		Speculative: true,
 	},
 	{
 		Provider: "openai-codex", ID: "gpt-5.3-codex-spark", DisplayName: "GPT-5.3 Codex Spark",
 		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 1.75, PriceOutput: 14.00, PriceCacheRead: 0.175,
+		PriceInput: 1.75, PriceOutput: 14, PriceCacheRead: 0.175,
 		Speculative: true,
 	},
 	{
-		Provider: "openai-codex", ID: "gpt-5.4", DisplayName: "GPT-5.4 Codex",
+		Provider: "openai-codex", ID: "gpt-5.4", DisplayName: "GPT-5.4",
 		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 2.50, PriceOutput: 15.00, PriceCacheRead: 0.25,
+		PriceInput: 2.5, PriceOutput: 15, PriceCacheRead: 0.25,
 		Speculative: true,
 	},
 	{
-		Provider: "openai-codex", ID: "gpt-5.4-mini", DisplayName: "GPT-5.4 mini Codex",
+		Provider: "openai-codex", ID: "gpt-5.4-mini", DisplayName: "GPT-5.4 mini",
 		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 0.75, PriceOutput: 4.50, PriceCacheRead: 0.075,
+		PriceInput: 0.75, PriceOutput: 4.5, PriceCacheRead: 0.075,
 		Speculative: true,
 	},
 	{
-		Provider: "openai-codex", ID: "gpt-5.5", DisplayName: "GPT-5.5 Codex",
+		Provider: "openai-codex", ID: "gpt-5.5", DisplayName: "GPT-5.5",
 		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 2.50, PriceOutput: 15.00, PriceCacheRead: 0.25,
-		Speculative: true,
-	},
-	{
-		Provider: "openai-codex", ID: "gpt-5.5-mini", DisplayName: "GPT-5.5 mini Codex",
-		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 0.75, PriceOutput: 4.50, PriceCacheRead: 0.075,
+		PriceInput: 5, PriceOutput: 30, PriceCacheRead: 0.5,
 		Speculative: true,
 	},
 }

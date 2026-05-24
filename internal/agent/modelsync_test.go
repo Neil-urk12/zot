@@ -83,6 +83,24 @@ func TestValidateAndRepairConfig_UnknownModel(t *testing.T) {
 	}
 }
 
+func TestValidateAndRepairConfig_DuplicateModelIDValidForConfiguredProvider(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ZOT_HOME", home)
+
+	b, _ := json.Marshal(Config{Provider: "openai-codex", Model: "gpt-5.5"})
+	_ = os.WriteFile(filepath.Join(home, "config.json"), b, 0o644)
+
+	ValidateAndRepairConfig()
+
+	out, _ := LoadConfig()
+	if out.Provider != "openai-codex" {
+		t.Errorf("provider mutated: %q", out.Provider)
+	}
+	if out.Model != "gpt-5.5" {
+		t.Errorf("model mutated: %q", out.Model)
+	}
+}
+
 // TestValidateAndRepairConfig_HappyPath leaves a valid config alone.
 func TestValidateAndRepairConfig_HappyPath(t *testing.T) {
 	home := t.TempDir()

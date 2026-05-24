@@ -75,23 +75,23 @@ func ValidateAndRepairConfig() {
 	}
 
 	if cfg.Provider != "" && cfg.Model != "" {
-		if m, err := provider.FindModel("", cfg.Model); err == nil {
-			if m.Provider != cfg.Provider {
+		if _, err := provider.FindModel(cfg.Provider, cfg.Model); err != nil {
+			if m, err := provider.FindModel("", cfg.Model); err == nil {
 				fix := defaultModelForProvider(cfg.Provider)
 				fmt.Fprintf(os.Stderr,
 					"zot: config.json: model %q belongs to provider %q (config has provider=%q); switched model to %q\n",
 					cfg.Model, m.Provider, cfg.Provider, fix)
 				cfg.Model = fix
 				changed = true
+			} else if cfg.Provider != "ollama" {
+				// Model id not in any catalog. Reset to provider's default.
+				fix := defaultModelForProvider(cfg.Provider)
+				fmt.Fprintf(os.Stderr,
+					"zot: config.json: model %q not found in the active catalog; switched to %q\n",
+					cfg.Model, fix)
+				cfg.Model = fix
+				changed = true
 			}
-		} else if cfg.Provider != "ollama" {
-			// Model id not in any catalog. Reset to provider's default.
-			fix := defaultModelForProvider(cfg.Provider)
-			fmt.Fprintf(os.Stderr,
-				"zot: config.json: model %q not found in the active catalog; switched to %q\n",
-				cfg.Model, fix)
-			cfg.Model = fix
-			changed = true
 		}
 	}
 
