@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mattn/go-runewidth"
+
 	"github.com/patriceckhart/zot/internal/tui"
 )
 
@@ -408,8 +410,10 @@ func (s *slashSuggester) Render(input string, th tui.Theme, width int) []string 
 			lines = append(lines, "")
 			rule := strings.Repeat("─", width)
 			label := "── " + c.Name + " "
-			if len(label) < width {
-				rule = label + strings.Repeat("─", width-len(label))
+			// runewidth, not len: the leading "── " glyphs are multi-byte,
+			// so byte-length padding leaves the rule short of the right edge.
+			if lw := runewidth.StringWidth(label); lw < width {
+				rule = label + strings.Repeat("─", width-lw)
 			}
 			lines = append(lines, th.FG256(th.Muted, rule))
 			lines = append(lines, "")
