@@ -39,7 +39,13 @@ type codexClient struct {
 	token     string
 	accountID string
 	baseURL   string
-	http      *http.Client
+	// name is the provider id reported via Name() and EventStart.
+	// Defaults to "openai-codex". NewOpenAIResponses and custom
+	// providers (Model.API == "openai-responses") override it so the
+	// reported provider id matches the caller instead of always being
+	// "openai-codex".
+	name string
+	http *http.Client
 }
 
 // NewOpenAICodex creates a client that talks to ChatGPT's Codex endpoint
@@ -53,11 +59,17 @@ func NewOpenAICodex(token, accountID, baseURL string) Client {
 		token:     token,
 		accountID: accountID,
 		baseURL:   strings.TrimRight(baseURL, "/"),
+		name:      "openai-codex",
 		http:      &http.Client{Timeout: 0},
 	}
 }
 
-func (c *codexClient) Name() string { return "openai-codex" }
+func (c *codexClient) Name() string {
+	if c.name == "" {
+		return "openai-codex"
+	}
+	return c.name
+}
 
 // ---- Responses API wire types (subset needed for zot's surface) ----
 
@@ -151,7 +163,7 @@ type codexRequest struct {
 // ---- Request building ----
 
 func (c *codexClient) buildRequest(req Request) (*codexRequest, error) {
-	m, err := FindModel("openai-codex", req.Model)
+	m, err := FindModel(c.Name(), req.Model)
 	if err != nil {
 		m, err = FindModel("openai", req.Model)
 	}
@@ -356,11 +368,11 @@ func (c *codexClient) runStream(ctx context.Context, resp *http.Response, req Re
 	defer close(out)
 	defer resp.Body.Close()
 
-	model, _ := FindModel("openai-codex", req.Model)
+	model, _ := FindModel(c.Name(), req.Model)
 	if model.ID == "" {
 		model, _ = FindModel("openai", req.Model)
 	}
-	out <- EventStart{Model: req.Model, Provider: "openai-codex"}
+	out <- EventStart{Model: req.Model, Provider: c.Name()}
 
 	raw := make(chan sseEvent, 16)
 	go readSSE(resp.Body, raw)

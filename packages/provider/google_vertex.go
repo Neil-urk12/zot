@@ -339,13 +339,16 @@ func NewVertex(_ string, _ string) Client {
 	inner := &geminiClient{
 		apiKey:  "vertex-placeholder", // overwritten by transport
 		baseURL: "https://" + cfg.location + "-aiplatform.googleapis.com",
+		// Report as google-vertex (not google) for cost / cache / log
+		// purposes; this also flows into EventStart.Provider and the
+		// catalog lookup inside Stream.
+		name: "google-vertex",
 		http: &http.Client{
 			Transport: &vertexTransport{inner: http.DefaultTransport, cfg: cfg},
 			Timeout:   0,
 		},
 	}
-	// Wrap so Name() reports "google-vertex" instead of "google".
-	return &renamedClient{inner: inner, name: "google-vertex"}
+	return inner
 }
 
 // renamedClient wraps a Client and overrides its Name(). Used for

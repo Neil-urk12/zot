@@ -185,23 +185,26 @@ func (c *openaiClient) buildRequest(req Request) (*oaiRequest, error) {
 	}
 	if m.Reasoning {
 		out.MaxCompletionTok = &maxTok
-		effort := OpenAIReasoningEffort(req.Reasoning)
-		if usesAdaptiveThinking(m) {
-			// Some gateways expose adaptive-thinking Anthropic models through
-			// the OpenAI-compatible chat-completions wire. They accept the
-			// same reasoning_effort knob, including the top "xhigh" tier;
-			// don't clamp zot's "maximum" to "high" for those models.
-			effort = OpenAICompatAnthropicEffort(req.Reasoning)
-		}
-		if effort != "" {
-			out.ReasoningEffort = effort
+		// Only send reasoning_effort if the model supports it.
+		if m.SupportsReasoningEffort == nil || *m.SupportsReasoningEffort {
+			effort := OpenAIReasoningEffort(req.Reasoning)
+			if usesAdaptiveThinking(m) {
+				effort = OpenAICompatAnthropicEffort(req.Reasoning)
+			}
+			if effort != "" {
+				out.ReasoningEffort = effort
+			}
 		}
 	} else {
 		out.MaxTokens = &maxTok
 	}
 
 	if req.System != "" {
-		out.Messages = append(out.Messages, oaiMessage{Role: "system", Content: req.System})
+		role := "system"
+		if m.SupportsDeveloperRole != nil && *m.SupportsDeveloperRole {
+			role = "developer"
+		}
+		out.Messages = append(out.Messages, oaiMessage{Role: role, Content: req.System})
 	}
 
 	// DeepSeek's chat-completions API rejects the multimodal content

@@ -33,23 +33,45 @@ const geminiDefaultBaseURL = "https://generativelanguage.googleapis.com"
 type geminiClient struct {
 	apiKey  string
 	baseURL string
-	http    *http.Client
+	// name is the provider id reported via Name() and EventStart.
+	// Defaults to "google"; custom providers (Model.API == "google")
+	// and Vertex override it so cost/catalog lookups and logs use the
+	// caller's provider id instead of the hardcoded built-in name.
+	name string
+	http *http.Client
 }
 
 // NewGemini creates a Gemini client using an AI Studio API key.
 // baseURL may be empty; defaults to https://generativelanguage.googleapis.com.
 func NewGemini(apiKey, baseURL string) Client {
+	return NewGeminiNamed("google", apiKey, baseURL)
+}
+
+// NewGeminiNamed is like NewGemini but lets the caller set the provider
+// id reported via Name() and EventStart. Used by custom providers so a
+// user-defined provider with api="google" keeps its own name for cost,
+// catalog, and logging purposes instead of reporting as "google".
+func NewGeminiNamed(name, apiKey, baseURL string) Client {
 	if baseURL == "" {
 		baseURL = geminiDefaultBaseURL
+	}
+	if name == "" {
+		name = "google"
 	}
 	return &geminiClient{
 		apiKey:  apiKey,
 		baseURL: strings.TrimRight(baseURL, "/"),
+		name:    name,
 		http:    &http.Client{Timeout: 0},
 	}
 }
 
-func (c *geminiClient) Name() string { return "google" }
+func (c *geminiClient) Name() string {
+	if c.name == "" {
+		return "google"
+	}
+	return c.name
+}
 
 // ---- wire types ----
 //
@@ -126,13 +148,13 @@ type gemRequest struct {
 // ---- request building ----
 
 func (c *geminiClient) buildRequest(req Request) (*gemRequest, string, error) {
-	m, err := FindModel("google", req.Model)
+	m, err := FindModel(c.Name(), req.Model)
 	if err != nil {
 		// Not in the catalog — still allow custom ids by falling back
 		// to defaults so users can point at unreleased models or
 		// alternate base URLs.
 		m = Model{
-			Provider:      "google",
+			Provider:      c.Name(),
 			ID:            req.Model,
 			ContextWindow: 1_000_000,
 			MaxOutput:     8192,
@@ -497,8 +519,8 @@ func (c *geminiClient) runStream(ctx context.Context, resp *http.Response, req R
 	defer close(out)
 	defer resp.Body.Close()
 
-	model, _ := FindModel("google", req.Model)
-	out <- EventStart{Model: req.Model, Provider: "google"}
+	model, _ := FindModel(c.Name(), req.Model)
+	out <- EventStart{Model: req.Model, Provider: c.Name()}
 
 	raw := make(chan sseEvent, 16)
 	go readSSE(resp.Body, raw)
