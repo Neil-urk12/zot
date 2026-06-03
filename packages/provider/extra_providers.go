@@ -40,6 +40,55 @@ func newOpenAICompat(name, apiKey, baseURL, fallbackBaseURL string) Client {
 	}
 }
 
+// NewCustomClient creates a Client for a user-defined provider.
+// It reads m.API to pick the wire protocol, m.BaseURL for the endpoint,
+// and m.Headers for extra HTTP headers. The apiKey is the resolved
+// credential (from models.json, env var, or auth.json).
+func NewCustomClient(m Model, apiKey string) Client {
+	baseURL := strings.TrimRight(m.BaseURL, "/")
+	if baseURL == "" {
+		return &unimplementedClient{
+			name: m.Provider,
+			hint: "baseUrl is required for custom providers",
+		}
+	}
+	switch m.API {
+	case "openai", "":
+		return &openaiClient{
+			apiKey:  apiKey,
+			baseURL: baseURL,
+			name:    m.Provider,
+			headers: m.Headers,
+			http:    &http.Client{Timeout: 0},
+		}
+	case "openai-responses":
+		return &codexClient{
+			token:   apiKey,
+			baseURL: strings.TrimRight(baseURL, "/"),
+			name:    m.Provider,
+			http: &http.Client{
+				Transport: &openaiResponsesTransport{inner: http.DefaultTransport},
+				Timeout:   0,
+			},
+		}
+	case "anthropic":
+		return &anthropicClient{
+			apiKey:  apiKey,
+			baseURL: baseURL,
+			name:    m.Provider,
+			headers: m.Headers,
+			http:    &http.Client{Timeout: 0},
+		}
+	case "google":
+		return NewGeminiNamed(m.Provider, apiKey, baseURL)
+	default:
+		return &unimplementedClient{
+			name: m.Provider,
+			hint: fmt.Sprintf("unknown api type %q; supported: openai, anthropic, openai-responses, google", m.API),
+		}
+	}
+}
+
 // NewMoonshot is the global Moonshot AI endpoint (Kimi-K2 family by id).
 // Provider id is `moonshotai`.
 func NewMoonshot(apiKey, baseURL string) Client {

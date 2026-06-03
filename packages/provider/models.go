@@ -39,6 +39,31 @@ type Model struct {
 	// ollama, vLLM, LM Studio, etc.
 	BaseURL string
 
+	// API overrides the wire protocol for this model. When non-empty,
+	// NewClient() uses this instead of the provider name to pick the
+	// constructor ("openai", "anthropic", "openai-responses", "google").
+	// Used by custom providers declared in models.json.
+	API string
+
+	// APIKey is the resolved API key for this specific model, populated
+	// from models.json (model-level or provider-level fallback).
+	APIKey string
+
+	// Headers are extra HTTP headers to send on every request.
+	// Populated from models.json provider-level or model-level headers.
+	// Env var interpolation ($VAR) is resolved at load time.
+	Headers map[string]string
+
+	// SupportsDeveloperRole, when non-nil and true, tells the OpenAI
+	// client to use the "developer" role for system prompts instead of
+	// "system". Default (nil/false) uses "system" for maximum compat.
+	SupportsDeveloperRole *bool
+
+	// SupportsReasoningEffort, when non-nil and false, tells the
+	// OpenAI client to omit reasoning_effort from requests. Default
+	// (nil/true) includes it for reasoning-capable models.
+	SupportsReasoningEffort *bool
+
 	// Source is where this model entry came from: "catalog" (baked in),
 	// "live" (discovered via /v1/models), or "cache" (loaded from the
 	// on-disk cache). Informational.
