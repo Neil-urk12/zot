@@ -69,8 +69,10 @@ The easiest way is to just run `zot` and type `/login`. The TUI opens even witho
 ### Credential lookup order
 
 1. `--api-key` flag
-2. provider-specific env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `KIMI_API_KEY`, `MOONSHOT_API_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY`, `CEREBRAS_API_KEY`, `TOGETHER_API_KEY`, `HF_TOKEN`, `ZAI_API_KEY`, `XIAOMI_API_KEY`, `MINIMAX_API_KEY`, `FIREWORKS_API_KEY`, `AI_GATEWAY_API_KEY`, `COPILOT_GITHUB_TOKEN`, `GITHUB_COPILOT_TOKEN`, and others for provider-specific backends)
-3. `$ZOT_HOME/auth.json` (API key or OAuth token; mode 0600)
+2. `apiKey` in `models.json` (for user-defined custom providers)
+3. provider-specific env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `KIMI_API_KEY`, `MOONSHOT_API_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY`, `CEREBRAS_API_KEY`, `TOGETHER_API_KEY`, `HF_TOKEN`, `ZAI_API_KEY`, `XIAOMI_API_KEY`, `MINIMAX_API_KEY`, `FIREWORKS_API_KEY`, `AI_GATEWAY_API_KEY`, `COPILOT_GITHUB_TOKEN`, `GITHUB_COPILOT_TOKEN`, and others for provider-specific backends)
+4. generic `<PROVIDER>_API_KEY` env var for custom providers (e.g. `MY_VLLM_API_KEY` for a provider named `my-vllm`)
+5. `$ZOT_HOME/auth.json` (API key or OAuth token; mode 0600)
 
 `$ZOT_HOME` defaults to:
 - macOS: `~/Library/Application Support/zot`
@@ -137,7 +139,7 @@ zot --help
 
 | Flag | Description |
 |---|---|
-| `--provider <id>` | Pick the provider (for example `anthropic`, `openai`, `openai-codex`, `kimi`, `google`, `github-copilot`, `groq`, `openrouter`, `amazon-bedrock`, `ollama`; see Providers). |
+| `--provider <id>` | Pick the provider (for example `anthropic`, `openai`, `openai-codex`, `kimi`, `google`, `github-copilot`, `groq`, `openrouter`, `amazon-bedrock`, `ollama`, or any custom provider name from `models.json`; see Providers). |
 | `--model <id>` | Pick the model (see `--list-models`). |
 | `--api-key <key>` | Override the API key. |
 | `--base-url <url>` | Override the provider base URL (tests, self-hosted). |
@@ -327,16 +329,18 @@ zot's built-in provider catalog includes:
 - **Direct API providers**: Anthropic, OpenAI Chat Completions, OpenAI Responses, DeepSeek, Google Gemini, Kimi/Moonshot, Moonshot CN, Groq, Cerebras, xAI, Together AI, Hugging Face Router, OpenRouter, Mistral, Z.AI, Xiaomi/MiMo token-plan regions, MiniMax global/CN, Fireworks, Vercel AI Gateway, OpenCode/OpenCode Go.
 - **Cloud/platform providers**: Amazon Bedrock, Google Vertex AI, Azure OpenAI, Cloudflare Workers AI, Cloudflare AI Gateway.
 - **Local/compatible**: Ollama and OpenAI-compatible local endpoints via `--base-url`.
+- **Custom providers**: User-defined providers registered in `models.json` (see Custom models). Supports OpenAI-compatible, Anthropic, and Gemini API formats.
 
 Use `/login` to store API keys or subscription credentials. `/model` only shows models from providers that are currently available from env vars, `auth.json`, Kimi CLI fallback, or local Ollama.
 
 ## Models
 
-`--list-models` or the `/model` picker shows the full catalog across all built-in providers. Three sources:
+`--list-models` or the `/model` picker shows the full catalog across all built-in providers. Four sources:
 
 - **Catalog**: models baked into zot, covering Claude, GPT/Codex, Gemini/Gemma, Kimi/Moonshot, DeepSeek, Groq-hosted Llama/Gemma/Compound, OpenRouter-routed models, Bedrock model ids, Vertex model ids, Azure OpenAI deployments, Copilot models, and other provider-specific catalog entries.
 - **Live**: IDs discovered from `GET /v1/models` using your stored API key (cached for 6h in `$ZOT_HOME/models-cache.json`, refreshed in the background on startup).
 - **Speculative**: IDs that appear in the upstream generator but aren't live on the public API yet. They'll 404 today and start working the moment the provider ships them.
+- **User-defined**: Models from `models.json` in `$ZOT_HOME`. These take precedence over all other sources.
 
 The context meter in the status line uses the model's advertised context window to show how much of it your last turn consumed.
 
@@ -354,7 +358,7 @@ No configuration is required — the candidate list is built dynamically from yo
 
 ### Custom models
 
-Place a `models.json` in `$ZOT_HOME` (macOS: `~/Library/Application Support/zot/`, Linux: `~/.local/state/zot/`) to add models that aren't in the baked-in catalog or to override existing entries:
+Place a `models.json` in `$ZOT_HOME` (macOS: `~/Library/Application Support/zot/`, Linux: `~/.local/state/zot/`) to add models that aren't in the baked-in catalog, override existing entries, or register entirely custom providers:
 
 ```json
 {
@@ -369,12 +373,59 @@ Place a `models.json` in `$ZOT_HOME` (macOS: `~/Library/Application Support/zot/
           "maxTokens": 128000
         }
       ]
+    },
+    "my-vllm": {
+      "api": "openai",
+      "baseUrl": "http://localhost:8000/v1",
+      "apiKey": "$MY_VLLM_API_KEY",
+      "models": [
+        {
+          "id": "llama-3.1-70b",
+          "name": "Llama 3.1 70B",
+          "contextWindow": 128000,
+          "maxTokens": 8192
+        }
+      ]
     }
   }
 }
 ```
 
-Supported fields per model: `id` (required), `name`, `reasoning`, `contextWindow`, `maxTokens`, `baseUrl`, `priceInput`, `priceOutput`, `priceCacheRead`, `priceCacheWrite`.
+**Supported fields per provider:**
+
+| Field | Description |
+|---|---|
+| `api` | API format to use (`openai`, `anthropic`, `gemini`, `openai-responses`, or `openai-codex`). Required for custom providers. |
+| `baseUrl` | Base URL for the provider API. Required for custom providers. |
+| `apiKey` | API key (supports `$ENV_VAR` interpolation). Falls back to `<PROVIDER>_API_KEY` env var. |
+| `headers` | Extra HTTP headers as key-value pairs (supports `$ENV_VAR` interpolation). |
+| `compat` | Compatibility flags (see below). |
+| `models` | Array of model definitions. |
+
+**Supported fields per model:**
+
+| Field | Description |
+|---|---|
+| `id` | Model ID (required). |
+| `name` | Display name. |
+| `reasoning` | Whether the model supports extended thinking. |
+| `contextWindow` | Context window size in tokens. |
+| `maxTokens` | Maximum output tokens. |
+| `baseUrl` | Override the provider-level base URL for this model. |
+| `apiKey` | Override the provider-level API key for this model. |
+| `headers` | Override the provider-level headers for this model. |
+| `api` | Override the provider-level API format for this model. |
+| `priceInput` | Input token price. |
+| `priceOutput` | Output token price. |
+| `priceCacheRead` | Cache read token price. |
+| `priceCacheWrite` | Cache write token price. |
+
+**Compatibility flags** (set per-provider in `compat` or per-model):
+
+| Flag | Description |
+|---|---|
+| `supportsDeveloperRole` | Use `"developer"` role instead of `"system"` in OpenAI-compatible APIs. |
+| `supportsReasoningEffort` | Send `reasoning_effort` parameter (disable if the API rejects it). |
 
 Provider keys are normalized: `openai-codex` and `openai-responses` map to `openai`, `anthropic-messages` maps to `anthropic`, `moonshot`, `moonshot-ai`, and `kimi-code` map to `kimi`, and `deepseek-chat` and `deepseek-ai` map to `deepseek`. Built-in provider ids such as `groq`, `openrouter`, `github-copilot`, `amazon-bedrock`, `google-vertex`, `azure-openai-responses`, `fireworks`, `vercel-ai-gateway`, `mistral`, and `xai` can also be used directly.
 
