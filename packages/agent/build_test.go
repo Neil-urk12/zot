@@ -1,10 +1,14 @@
 package agent
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/patriceckhart/zot/packages/provider"
 )
 
 func TestReadAgentsContextLoadsGlobalAndAncestors(t *testing.T) {
@@ -106,5 +110,158 @@ func TestResolveExplicitFlagStaleDoesNotRepairConfig(t *testing.T) {
 	cfg, _ := LoadConfig()
 	if cfg.Model != good {
 		t.Errorf("config.json was clobbered (was %q; now %q)", good, cfg.Model)
+	}
+}
+
+// TestResolveCustomProvider validates full resolution of a user-defined
+// custom provider: models.json apiKey, base URL, and client construction.
+func TestResolveCustomProvider(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ZOT_HOME", home)
+
+	modelsJSON := `{
+		"providers": {
+			"my-vllm": {
+				"api": "openai",
+				"baseUrl": "http://localhost:8080/v1",
+				"apiKey": "test-key",
+				"models": [
+					{"id": "llama-3", "name": "Llama 3", "contextWindow": 8192, "maxTokens": 4096}
+				]
+			}
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(home, "models.json"), []byte(modelsJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	models, apiKeys, _ := provider.LoadUserModelsWithWarnings(filepath.Join(home, "models.json"))
+	provider.SetUserModels(models)
+	provider.SetUserAPIKeys(apiKeys)
+
+	r, err := Resolve(Args{Provider: "my-vllm", Model: "llama-3"}, true)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if r.Provider != "my-vllm" {
+		t.Errorf("provider=%q want my-vllm", r.Provider)
+	}
+	if r.Model != "llama-3" {
+		t.Errorf("model=%q want llama-3", r.Model)
+	}
+	if r.BaseURL != "http://localhost:8080/v1" {
+		t.Errorf("baseUrl=%q want http://localhost:8080/v1", r.BaseURL)
+	}
+	if r.Credential != "test-key" {
+		t.Errorf("credential=%q want test-key", r.Credential)
+	}
+
+	// NewClient should produce an OpenAI-compat client.
+	c := r.NewClient()
+	if c.Name() != "my-vllm" {
+		t.Errorf("client name=%q want my-vllm", c.Name())
+	}
+}
+
+// TestResolveCustomProviderDefaultModel verifies that --model can be
+// omitted for a user-defined provider; Resolve auto-picks the first model.
+func TestResolveCustomProviderDefaultModel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ZOT_HOME", home)
+
+	modelsJSON := `{
+		"providers": {
+			"my-local": {
+				"api": "anthropic",
+				"baseUrl": "http://localhost:9090",
+				"apiKey": "key",
+				"models": [
+					{"id": "custom-claude", "name": "Custom Claude"}
+				]
+			}
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(home, "models.json"), []byte(modelsJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	models, apiKeys, _ := provider.LoadUserModelsWithWarnings(filepath.Join(home, "models.json"))
+	provider.SetUserModels(models)
+	provider.SetUserAPIKeys(apiKeys)
+
+	// No --model flag: should auto-pick the first model for my-local.
+	r, err := Resolve(Args{Provider: "my-local"}, true)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if r.Model != "custom-claude" {
+		t.Errorf("model=%q want custom-claude (auto-picked)", r.Model)
+	}
+}
+
+// TestResolveCustomProviderEnvVar tests the <PROVIDER>_API_KEY env var
+// fallback when models.json defines a provider without an apiKey.
+func TestResolveCustomProviderEnvVar(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ZOT_HOME", home)
+	t.Setenv("MY_VLLM_API_KEY", "env-key-123")
+
+	modelsJSON := `{
+		"providers": {
+			"my-vllm": {
+				"api": "openai",
+				"baseUrl": "http://localhost:8080/v1",
+				"models": [{"id": "llama-3", "name": "Llama 3"}]
+			}
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(home, "models.json"), []byte(modelsJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	models, apiKeys, _ := provider.LoadUserModelsWithWarnings(filepath.Join(home, "models.json"))
+	provider.SetUserModels(models)
+	provider.SetUserAPIKeys(apiKeys)
+
+	r, err := Resolve(Args{Provider: "my-vllm", Model: "llama-3"}, true)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if r.Credential != "env-key-123" {
+		t.Errorf("credential=%q want env-key-123", r.Credential)
+	}
+}
+
+func TestLoadUserModels_ShadowsKnownProvider(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ZOT_HOME", home)
+
+	modelsJSON := `{
+		"providers": {
+			"openai": {
+				"api": "openai",
+				"baseUrl": "http://localhost:8080/v1",
+				"apiKey": "custom-key",
+				"models": [
+					{"id": "my-model", "name": "My Model"}
+				]
+			}
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(home, "models.json"), []byte(modelsJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Capture stderr warnings.
+	var buf bytes.Buffer
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
+	LoadUserModels()
+
+	w.Close()
+	os.Stderr = old
+	io.Copy(&buf, r)
+
+	if !strings.Contains(buf.String(), "openai") || !strings.Contains(buf.String(), "shadows") {
+		t.Errorf("expected shadow warning for openai, got stderr: %q", buf.String())
 	}
 }

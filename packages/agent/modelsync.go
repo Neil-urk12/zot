@@ -39,11 +39,26 @@ func LoadCachedModels() {
 // JSON, negative widths) are surfaced as one warning per line on stderr;
 // the well-formed entries from the rest of the file are still loaded.
 func LoadUserModels() {
-	models, warnings := provider.LoadUserModelsWithWarnings(UserModelsPath())
+	models, apiKeys, warnings := provider.LoadUserModelsWithWarnings(UserModelsPath())
 	for _, w := range warnings {
 		fmt.Fprintln(os.Stderr, "zot:", w)
 	}
+	// Warn when a custom provider name shadows a known built-in.
+	seen := map[string]bool{}
+	for _, m := range models {
+		if seen[m.Provider] {
+			continue
+		}
+		seen[m.Provider] = true
+		for _, kp := range knownProviders {
+			if m.Provider == kp {
+				fmt.Fprintf(os.Stderr, "zot: warning: custom provider %q shadows built-in provider; models.json apiKey takes precedence over env var and auth.json\n", m.Provider)
+				break
+			}
+		}
+	}
 	provider.SetUserModels(models)
+	provider.SetUserAPIKeys(apiKeys)
 }
 
 // ValidateAndRepairConfig checks the persisted config.json's

@@ -183,6 +183,11 @@ func defaultModelForProvider(prov string) string {
 	case "github-copilot":
 		return "claude-sonnet-4.5"
 	default:
+		// User-defined provider: return its first model from the
+		// active catalog, or fall back to the global default.
+		if models := provider.ModelsForProvider(prov); len(models) > 0 {
+			return models[0].ID
+		}
 		return provider.DefaultModel.ID
 	}
 }
@@ -207,6 +212,13 @@ var knownProviders = []string{
 func isKnownProvider(name string) bool {
 	for _, p := range knownProviders {
 		if p == name {
+			return true
+		}
+	}
+	// User-defined providers from models.json appear in the active
+	// catalog but not in the static knownProviders list.
+	for _, m := range provider.Active() {
+		if m.Provider == name {
 			return true
 		}
 	}
@@ -562,6 +574,20 @@ func (r Resolved) NewClient() provider.Client {
 	if !r.HasCredential() {
 		panic("NewClient called without credential; check HasCredential first")
 	}
+	// Custom providers from models.json declare their wire protocol
+	// via Model.API. When set, use NewCustomClient instead of the
+	// hardcoded provider switch.
+	if m, err := provider.FindModel(r.Provider, r.Model); err == nil && m.API != "" {
+		cred := r.Credential
+		if m.APIKey != "" {
+			cred = m.APIKey // Model-level API key takes precedence
+		}
+		if r.BaseURL != "" {
+			m.BaseURL = r.BaseURL // CLI --base-url overrides
+		}
+		return provider.NewCustomClient(m, cred)
+	}
+
 	switch r.Provider {
 	case "ollama":
 		return provider.NewOpenAI(r.Credential, r.BaseURL)
@@ -843,6 +869,6 @@ func envVarName(provider string) string {
 	case "azure-openai-responses":
 		return "AZURE_OPENAI"
 	default:
-		return "ANTHROPIC"
+		return strings.ToUpper(strings.ReplaceAll(provider, "-", "_"))
 	}
 }

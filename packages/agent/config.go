@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
+	provpkg "github.com/patriceckhart/zot/packages/provider"
 	"github.com/patriceckhart/zot/packages/provider/auth"
 )
 
@@ -136,6 +138,10 @@ func ResolveCredential(provider, explicit string) (cred, method string, err erro
 func ResolveCredentialFull(provider, explicit string) (cred, method, accountID string, err error) {
 	if explicit != "" {
 		return explicit, "apikey", "", nil
+	}
+	// User-defined providers: check models.json apiKey first.
+	if key := provpkg.UserAPIKey(provider); key != "" {
+		return key, "apikey", "", nil
 	}
 	switch provider {
 	case "anthropic":
@@ -285,6 +291,12 @@ func ResolveCredentialFull(provider, explicit string) (cred, method, accountID s
 		if v := os.Getenv("AZURE_OPENAI_API_KEY"); v != "" {
 			return v, "apikey", "", nil
 		}
+	}
+	// User-defined providers: try <PROVIDER>_API_KEY env var.
+	// "my-vllm" -> MY_VLLM_API_KEY
+	envKey := strings.ToUpper(strings.ReplaceAll(provider, "-", "_")) + "_API_KEY"
+	if v := os.Getenv(envKey); v != "" {
+		return v, "apikey", "", nil
 	}
 	c, err := AuthStoreFor().Load()
 	if err != nil {
