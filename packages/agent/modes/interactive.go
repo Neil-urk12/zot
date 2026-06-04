@@ -2,6 +2,7 @@ package modes
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -213,6 +214,7 @@ type chatCacheKey struct {
 	statusErr       string
 	help            string
 	extNotes        string
+	shellBlock      string
 	updateAvailable bool
 	updateCurrent   string
 	updateLatest    string
@@ -377,6 +379,15 @@ type Interactive struct {
 	// Notify / Display. They live above the editor (just below the
 	// transcript) until cleared by /clear or another reset.
 	extNotes []string
+
+	// shellBlock holds the rendered terminal-log lines of the most
+	// recent !command shell escape. It lives below the transcript
+	// (under extNotes) until the user sends their next prompt or runs
+	// /clear. shellRunning is true while a !command is executing; it
+	// shares i.busy/i.cancelTurn so esc cancels it and no turn or
+	// other shell escape can start while one is in flight.
+	shellBlock   []string
+	shellRunning bool
 
 	// sessionLoading is true while a /sessions selection is being read
 	// on a background goroutine. Keeping this off the input goroutine
@@ -754,6 +765,7 @@ func (i *Interactive) chatCacheKeyLocked(cols int) (chatCacheKey, bool) {
 		statusErr:       i.statusErr,
 		help:            strings.Join(i.helpBlock, "\n"),
 		extNotes:        strings.Join(i.extNotes, "\n"),
+		shellBlock:      strings.Join(i.shellBlock, "\n"),
 		updateAvailable: i.updateInfo.Available,
 		updateCurrent:   i.updateInfo.Current,
 		updateLatest:    i.updateInfo.Latest,
@@ -869,6 +881,14 @@ func (i *Interactive) buildChatLocked(cols int) []string {
 	// transcript, above the dialog/editor band. Cleared by /clear.
 	if len(i.extNotes) > 0 {
 		chat = append(chat, i.extNotes...)
+		chat = append(chat, "")
+	}
+
+	// Shell-escape terminal-log block (!command). Rendered below the
+	// transcript and extension notes; cleared when the next prompt is
+	// sent or on /clear so it never leaks into the model conversation.
+	if len(i.shellBlock) > 0 {
+		chat = append(chat, i.shellBlock...)
 		chat = append(chat, "")
 	}
 
@@ -1041,8 +1061,19 @@ func (i *Interactive) redraw() {
 	// from the chat below, instead of the diff path leaving stale
 	// dialog content behind. Equivalent to the user pressing ctrl+l.
 	overlayOpen := len(dialog) > 0 || len(suggest) > 0
-	if i.prevOverlayOpen && !overlayOpen && i.rend != nil {
-		i.rend.Clear()
+	if i.rend != nil && i.prevOverlayOpen != overlayOpen {
+		// VS Code's terminal keeps scrollback (no \x1b[3J), so the
+		// diff path leaves stale rows behind when the slash/file popup
+		// opens AND when it closes. Force a full repaint on both
+		// transitions there, using Invalidate so we don't trigger VS
+		// Code's viewport-snap the way Clear would. Other terminals
+		// only need the close-transition Clear (the open paint is
+		// clean because scrollback was wiped).
+		if i.rend.KeepsScrollback() {
+			i.rend.Invalidate()
+		} else if i.prevOverlayOpen && !overlayOpen {
+			i.rend.Clear()
+		}
 	}
 	i.prevOverlayOpen = overlayOpen
 	if len(suggest) > 0 {
@@ -1845,14 +1876,21 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		i.mu.Lock()
 		hadHelp := len(i.helpBlock) > 0
 		hadNotes := len(i.extNotes) > 0
+		// Only dismiss a parked shell-escape log on esc when nothing is
+		// running; if a !command is in flight, esc must fall through to
+		// the cancel path below instead of just hiding the (empty) block.
+		hadShell := len(i.shellBlock) > 0 && !i.shellRunning
 		if hadHelp {
 			i.helpBlock = nil
 		}
 		if hadNotes {
 			i.extNotes = nil
 		}
+		if hadShell {
+			i.shellBlock = nil
+		}
 		i.mu.Unlock()
-		if hadHelp || hadNotes {
+		if hadHelp || hadNotes || hadShell {
 			i.invalidate()
 			return false
 		}
@@ -2071,6 +2109,11 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		i.inputHistoryIndex = -1
 		i.suggest.Reset()
 		i.fileSuggest.Reset()
+
+		if cmd, ok := shellEscapeCommand(text); ok {
+			i.startShellEscape(ctx, cmd)
+			return false
+		}
 
 		if looksLikeSlashCommand(text) {
 			head := text
@@ -2308,6 +2351,10 @@ func (i *Interactive) Notify(extName, level, message string) {
 
 // Submit feeds text through the agent loop as if the user had typed it.
 func (i *Interactive) Submit(text string) {
+	if cmd, ok := shellEscapeCommand(text); ok {
+		i.startShellEscape(i.runCtx, cmd)
+		return
+	}
 	i.startTurn(i.runCtx, text)
 }
 
@@ -2368,6 +2415,10 @@ func (i *Interactive) SubmitSlash(text string) {
 // forwarded — because the queued-prompt path is text-only; a
 // follow-up can expand the queue entry to carry images.
 func (i *Interactive) SubmitOrQueue(text string, images []provider.ImageBlock) {
+	if cmd, ok := shellEscapeCommand(text); ok {
+		i.startShellEscape(i.runCtx, cmd)
+		return
+	}
 	i.mu.Lock()
 	if i.agent == nil {
 		i.statusErr = "not logged in. type /login first."
@@ -3000,6 +3051,7 @@ func (i *Interactive) runSlash(ctx context.Context, cmd string) (done bool) {
 		i.parkedTotal = 0
 		i.scrollOffset = 0
 		i.extNotes = nil
+		i.shellBlock = nil
 		i.view.InvalidateRenderCache()
 		i.mu.Unlock()
 	case "/help":
@@ -3937,6 +3989,134 @@ func (i *Interactive) runCompact(parent context.Context, auto bool) {
 	}()
 }
 
+// shellEscapeCommand reports whether text is a "!command" shell
+// escape and, if so, returns the command with the leading '!' (and
+// surrounding whitespace) stripped. A bare "!" with no command is
+// treated as not an escape so it falls through to the normal prompt
+// path rather than running an empty shell.
+func shellEscapeCommand(text string) (string, bool) {
+	trimmed := strings.TrimLeft(text, " \t")
+	if !strings.HasPrefix(trimmed, "!") {
+		return "", false
+	}
+	cmd := strings.TrimSpace(strings.TrimPrefix(trimmed, "!"))
+	if cmd == "" {
+		return "", false
+	}
+	return cmd, true
+}
+
+// startShellEscape runs a "!command" in the same shell the bash tool
+// uses, in the session working directory, honoring the /jail sandbox.
+// It shares the busy/cancel state with the agent: esc cancels it, and
+// it refuses to start while a turn or another shell escape is already
+// in flight. The terminal-log output is parked in i.shellBlock below
+// the transcript until the next prompt or /clear, so it never enters
+// the model conversation.
+func (i *Interactive) startShellEscape(parent context.Context, cmd string) {
+	i.mu.Lock()
+	if i.busy || i.shellRunning {
+		i.statusErr = "busy — wait for the current turn to finish before running a shell command"
+		i.statusOK = ""
+		i.mu.Unlock()
+		i.invalidate()
+		return
+	}
+	if parent == nil {
+		parent = i.runCtx
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	i.busy = true
+	i.shellRunning = true
+	i.cancelTurn = cancel
+	i.statusErr = ""
+	i.statusOK = ""
+	i.spin.StartFixed("running shell command")
+	// A new shell escape replaces the previous block; clear stale
+	// extension notes the same way a new turn would so the screen
+	// doesn't accumulate transient state.
+	i.shellBlock = nil
+	i.scrollOffset = 0
+	i.parkedTurn = 0
+	i.parkedTotal = 0
+	i.helpBlock = nil
+	sandbox := i.cfg.Sandbox
+	cwd := i.cfg.CWD
+	i.mu.Unlock()
+	i.invalidate()
+
+	go func() {
+		defer cancel()
+		raw, _ := json.Marshal(map[string]any{"command": cmd})
+		bash := &tools.BashTool{CWD: cwd, Sandbox: sandbox}
+		res, err := bash.Execute(ctx, raw, nil)
+
+		var out string
+		if err != nil {
+			out = "$ " + cmd + "\n\n" + err.Error() + "\n\n[error]"
+		} else {
+			for _, c := range res.Content {
+				if tb, ok := c.(provider.TextBlock); ok {
+					out += tb.Text
+				}
+			}
+		}
+		cancelled := ctx.Err() != nil
+		failed := err != nil || res.IsError || cancelled
+		if cancelled {
+			out += "\n\n[cancelled]"
+		}
+
+		block := i.renderShellBlock(out, failed)
+
+		i.mu.Lock()
+		i.shellRunning = false
+		i.busy = false
+		i.cancelTurn = nil
+		i.shellBlock = block
+		if failed {
+			if cancelled {
+				i.statusErr = "shell command cancelled"
+			} else {
+				i.statusErr = "shell command failed"
+			}
+			i.statusOK = ""
+		} else {
+			i.statusOK = "shell command finished"
+			i.statusErr = ""
+		}
+		i.mu.Unlock()
+		i.invalidate()
+	}()
+}
+
+// renderShellBlock turns merged bash output into a styled terminal-log
+// block: each line colored by overall success (tool/green) or failure
+// (error/red), with the [exit ...] / [error] footer dimmed via the
+// muted color so it reads as metadata.
+func (i *Interactive) renderShellBlock(out string, failed bool) []string {
+	th := i.cfg.Theme
+	base := th.Tool
+	if failed {
+		base = th.Error
+	}
+	out = strings.TrimRight(out, "\n")
+	lines := strings.Split(out, "\n")
+	styled := make([]string, 0, len(lines))
+	for _, line := range lines {
+		color := base
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[exit ") || strings.HasPrefix(trimmed, "[error]") || strings.HasPrefix(trimmed, "[cancelled]") {
+			color = th.Muted
+		}
+		styled = append(styled, th.FG256(color, line))
+	}
+	return styled
+}
+
 func (i *Interactive) startTurn(parent context.Context, prompt string) {
 	i.startTurnWithImages(parent, prompt, nil)
 }
@@ -3944,13 +4124,6 @@ func (i *Interactive) startTurn(parent context.Context, prompt string) {
 func (i *Interactive) startTurnWithImages(parent context.Context, prompt string, images []provider.ImageBlock) {
 	if i.agent == nil {
 		return
-	}
-	// Force a full repaint when a new turn begins so any stray dialog,
-	// popup, or stale tool-progress rows don't leak into the visible
-	// chat area before the assistant starts streaming. Equivalent to
-	// the user pressing ctrl+l right before submit.
-	if i.rend != nil {
-		i.rend.Clear()
 	}
 	// Pre-turn safety: if the most recent context measurement is
 	// already past the auto-compact threshold, condense before
@@ -3984,6 +4157,7 @@ func (i *Interactive) startTurnWithImages(parent context.Context, prompt string,
 	i.streamOn = true
 	i.toolCalls = map[string]*tui.ToolCallView{}
 	i.toolOrder = nil
+	i.shellBlock = nil // sending a prompt clears any parked shell-escape log
 	i.scrollOffset = 0 // jump back to the bottom on new turn
 	// Reset the auto-follow baseline so the very next render at
 	// interactive.go:1053 doesn't see a synthetic shrink between

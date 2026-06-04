@@ -245,10 +245,7 @@ func (v *View) BuildLive(width int) []string {
 	finalised := map[string]bool{}
 	for _, m := range v.Messages {
 		for _, c := range m.Content {
-			switch b := c.(type) {
-			case provider.ToolCallBlock:
-				finalised[b.ID] = true
-			case provider.ToolResultBlock:
+			if b, ok := c.(provider.ToolResultBlock); ok {
 				finalised[b.CallID] = true
 			}
 		}
@@ -370,21 +367,15 @@ func (v *View) BuildWithAnchors(width int) ([]string, []MessageAnchor) {
 		}
 		out = append(out, "")
 	}
-	// Live tool-call overlay: skip any entry whose assistant
-	// tool_use block OR tool_result has already made it into the
-	// transcript. The EvAssistantMessage for a tool-use turn
-	// lands BEFORE executeTools runs, so between that moment and
-	// the tool-result being appended the overlay and the
-	// finalised transcript both render the same call. Checking
-	// for either side of the pair suppresses the duplicate in
-	// both windows.
+	// Live tool-call overlay: keep the in-flight box visible after
+	// the assistant tool_use is appended, then hide it only when the
+	// matching tool_result reaches the transcript. Assistant tool_use
+	// blocks render no rows of their own, so suppressing the overlay
+	// at that point makes the box disappear while the tool is running.
 	finalised := map[string]bool{}
 	for _, m := range v.Messages {
 		for _, c := range m.Content {
-			switch b := c.(type) {
-			case provider.ToolCallBlock:
-				finalised[b.ID] = true
-			case provider.ToolResultBlock:
+			if b, ok := c.(provider.ToolResultBlock); ok {
 				finalised[b.CallID] = true
 			}
 		}
@@ -712,20 +703,20 @@ func (v *View) renderToolCall(tc ToolCallView, width int) []string {
 	// here would double the gap during streaming and visibly tighten
 	// when the overlay disappears.
 
-	// Streaming body (write/edit): top edge with the label, body
-	// rows wrapped with vertical edges, bottom edge to close the
-	// box. When the call finalises, the live overlay disappears
-	// the same frame the transcript renders the closed box, so
-	// there's no visible hop.
-	if tc.Streaming && tc.Result == "" {
-		lines = append(lines, toolBoxTop(v.Theme, label, width))
-		lines = append(lines, toolBoxSide(v.Theme, "", width))
+	// Live body (write/edit): keep the streamed preview visible until
+	// a real tool result arrives. The provider can finish the tool_use
+	// JSON before zot has executed the tool, so keying this on
+	// tc.Streaming makes write/edit boxes collapse for a moment between
+	// EvToolUseEnd and EvToolResult.
+	if tc.Result == "" {
 		if body := v.renderLiveToolBody(tc, width); len(body) > 0 {
+			lines = append(lines, toolBoxTop(v.Theme, label, width))
+			lines = append(lines, toolBoxSide(v.Theme, "", width))
 			lines = append(lines, body...)
+			lines = append(lines, toolBoxSide(v.Theme, "", width))
+			lines = append(lines, toolBoxBottom(v.Theme, width))
+			return lines
 		}
-		lines = append(lines, toolBoxSide(v.Theme, "", width))
-		lines = append(lines, toolBoxBottom(v.Theme, width))
-		return lines
 	}
 
 	// Finished tool call with no body: just the labelled top edge

@@ -122,14 +122,16 @@ func (r *Renderer) Resize(cols, rows int) {
 		r.logViewportTop = 0
 		r.logHardwareRow = 0
 		r.logInit = false
-		if r.out != nil {
+		if r.out != nil && !r.keepScrollback {
 			// Clear both screen and (where safe) scrollback so stale
 			// content from the old width doesn't bleed through. Move
 			// to (1,1) so the next DrawLog/writeFull starts from a
 			// clean slate. Use the no-home variant: the explicit
 			// MoveTo below sets the cursor without triggering VS
 			// Code's viewport-snap. See Renderer.keepScrollback for
-			// why we skip \x1b[3J on VS Code's terminal.
+			// why we skip \x1b[3J on VS Code's terminal. On VS Code we
+			// skip the eager wipe entirely and let the next DrawLog
+			// repaint in place (see Clear).
 			_, _ = io.WriteString(r.out, SeqDeleteKittyImages+SeqClearScreenNoHome+r.clearScrollbackSeq()+MoveTo(1, 1))
 		}
 	}
@@ -148,6 +150,15 @@ func (r *Renderer) Clear() {
 	r.logViewportTop = 0
 	r.logHardwareRow = 0
 	r.logInit = false
+	if r.keepScrollback {
+		// Don't eagerly emit \x1b[2J here: on VS Code's xterm.js that
+		// scrolls the current frame up into scrollback, leaving a
+		// duplicate above the repaint. Just drop the diff state; the
+		// next DrawLog's writeFull does an in-place viewport clear
+		// (home + erase-to-end) that overwrites the old frame without
+		// duplicating it.
+		return
+	}
 	_, _ = io.WriteString(r.out, SeqDeleteKittyImages+SeqClearScreenNoHome+r.clearScrollbackSeq()+MoveTo(1, 1))
 }
 
@@ -162,6 +173,12 @@ func (r *Renderer) clearScrollbackSeq() string {
 	}
 	return SeqClearScrollback
 }
+
+// KeepsScrollback reports whether this renderer suppresses the
+// scrollback-clear escape (true under VS Code's terminal). Callers
+// use it to pick a viewport-safe full repaint (Invalidate) over a
+// scrollback-clearing one (Clear) when redrawing overlays.
+func (r *Renderer) KeepsScrollback() bool { return r.keepScrollback }
 
 // Invalidate forces a full repaint on the next Draw without clearing the
 // whole terminal first. Useful when the cached diff is unreliable but a
@@ -452,9 +469,23 @@ func (r *Renderer) DrawLog(chat, bottom []string, cursorBottomRow, cursorCol int
 	writeFull := func(clear bool) {
 		if clear {
 			w.WriteString(SeqDeleteKittyImages)
-			w.WriteString(SeqClearScreenNoHome)
-			w.WriteString(r.clearScrollbackSeq())
-			w.WriteString(MoveTo(1, 1))
+			if r.keepScrollback {
+				// VS Code's xterm.js scrolls the visible content up into
+				// scrollback on \x1b[2J, which duplicates the frame (the
+				// old paint stays above the new one). Home to the
+				// viewport top and erase-to-end (\x1b[0J) instead: that
+				// clears the visible screen in place without pushing the
+				// previous frame into scrollback. We still cannot drop
+				// existing scrollback (\x1b[3J snaps the viewport there),
+				// but a full repaint no longer stacks a fresh copy below
+				// the old one.
+				w.WriteString(SeqCursorHome)
+				w.WriteString(SeqClearToEnd)
+			} else {
+				w.WriteString(SeqClearScreenNoHome)
+				w.WriteString(r.clearScrollbackSeq())
+				w.WriteString(MoveTo(1, 1))
+			}
 		}
 		for idx, line := range lines {
 			if idx > 0 {

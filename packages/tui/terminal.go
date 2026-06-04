@@ -95,6 +95,13 @@ const (
 	// cursor identically without triggering that snap.
 	SeqClearScreenNoHome = "\x1b[2J"
 	SeqClearScrollback   = "\x1b[3J"
+	// SeqCursorHome moves to the top-left of the visible viewport.
+	// SeqClearToEnd erases from the cursor to the end of the screen
+	// without scrolling content into scrollback (unlike \x1b[2J on
+	// xterm.js). Together they clear the visible frame in place, which
+	// the VS Code terminal needs for duplicate-free full repaints.
+	SeqCursorHome        = "\x1b[H"
+	SeqClearToEnd        = "\x1b[0J"
 	SeqClearLine         = "\x1b[2K"
 	SeqResetScrollRegion = "\x1b[r"
 	SeqDeleteKittyImages = "\x1b_Ga=d\x1b\\"
