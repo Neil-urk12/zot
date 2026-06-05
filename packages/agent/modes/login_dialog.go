@@ -3,6 +3,7 @@ package modes
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 
 	"github.com/patriceckhart/zot/packages/provider"
 	"github.com/patriceckhart/zot/packages/provider/auth"
@@ -21,6 +22,7 @@ const (
 	loginStepProvider            // pick anthropic vs openai vs kimi
 	loginStepWaiting             // browser open, waiting for callback
 	loginStepPasteCode           // user pastes the auth code here
+	loginStepInfo                // informational setup guidance
 	loginStepDone                // success or error, waiting for key to dismiss
 )
 
@@ -29,14 +31,16 @@ const loginProviderPageSize = 8
 // loginDialog is a tiny inline dialog rendered above the editor while
 // the user picks their login method and provider.
 type loginDialog struct {
-	step     loginStep
-	method   string // "apikey" | "oauth"
-	provider string // "anthropic" | "openai" | "openai-codex" | "kimi" | "google"
-	message  string
-	success  bool
-	url      string
-	cursor   int
-	codeEd   *tui.Editor
+	step      loginStep
+	method    string // "apikey" | "oauth"
+	provider  string // "anthropic" | "openai" | "openai-codex" | "kimi" | "google"
+	message   string
+	success   bool
+	url       string
+	cursor    int
+	codeEd    *tui.Editor
+	infoTitle string
+	infoLines []string
 
 	// status is a snapshot of the current login state for each
 	// provider, captured when Open() runs. Rendered above the
@@ -68,6 +72,8 @@ func (d *loginDialog) Open(zotHome string) {
 	d.success = false
 	d.url = ""
 	d.cursor = 0
+	d.infoTitle = ""
+	d.infoLines = nil
 	d.status = map[string]string{}
 	for _, p := range providersForMethod("apikey") {
 		d.status[p] = ""
@@ -199,6 +205,18 @@ func (d *loginDialog) Render(th tui.Theme, width int) []string {
 		lines = append(lines, "")
 		lines = append(lines, th.FG256(th.Muted, "enter submits - esc cancels"))
 		lines = append(lines, frameRule(th, width))
+	case loginStepInfo:
+		title := d.infoTitle
+		if title == "" {
+			title = "login - setup"
+		}
+		lines = append(lines, frameHeader(th, title, width))
+		for _, l := range d.infoLines {
+			lines = append(lines, l)
+		}
+		lines = append(lines, "")
+		lines = append(lines, th.FG256(th.Muted, "press any key to close"))
+		lines = append(lines, frameRule(th, width))
 	case loginStepDone:
 		title := "login - failed"
 		body := th.FG256(th.Error, d.message)
@@ -221,10 +239,16 @@ func (d *loginDialog) Render(th tui.Theme, width int) []string {
 // consumer Gemini Advanced login does not, and DeepSeek has no
 // subscription product at all).
 func providersForMethod(method string) []string {
+	var providers []string
 	if method == "oauth" {
-		return []string{"anthropic", "openai-codex", "kimi", "github-copilot"}
+		providers = []string{"anthropic", "openai-codex", "kimi", "github-copilot"}
+	} else {
+		providers = auth.APIKeyProviders()
 	}
-	return auth.APIKeyProviders()
+	sort.Slice(providers, func(a, b int) bool {
+		return providerLabel(providers[a]) < providerLabel(providers[b])
+	})
+	return providers
 }
 
 // providerLabel returns the user-facing label for a provider id.
@@ -347,6 +371,9 @@ func (d *loginDialog) HandleKey(k tui.Key) loginDialogAction {
 		return d.handleWaitingKey(k)
 	case loginStepPasteCode:
 		return d.handlePasteCodeKey(k)
+	case loginStepInfo:
+		d.Close()
+		return loginDialogAction{Close: true}
 	case loginStepDone:
 		d.Close()
 		return loginDialogAction{Close: true}
@@ -428,6 +455,17 @@ func (d *loginDialog) ShowWaiting(url string) {
 	}
 	d.step = loginStepWaiting
 	d.url = url
+}
+
+// ShowInfo transitions to an informational setup dialog.
+// No-op if the user has already dismissed the dialog.
+func (d *loginDialog) ShowInfo(title string, lines []string) {
+	if d.step == loginStepClosed {
+		return
+	}
+	d.step = loginStepInfo
+	d.infoTitle = title
+	d.infoLines = lines
 }
 
 // ShowResult transitions to the done state with the given outcome.

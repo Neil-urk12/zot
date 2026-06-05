@@ -82,6 +82,33 @@ func TestReadAWSCredentialsFile(t *testing.T) {
 	}
 }
 
+func TestBedrockEventPayloadHelpers(t *testing.T) {
+	wrapped := []byte(`{"contentBlockDelta":{"contentBlockIndex":0,"delta":{"text":"Hello"}}}`)
+	if got := bedrockEventTypeFromPayload(wrapped); got != "contentBlockDelta" {
+		t.Fatalf("event type = %q, want contentBlockDelta", got)
+	}
+	var delta struct {
+		ContentBlockIndex int `json:"contentBlockIndex"`
+		Delta             struct {
+			Text string `json:"text"`
+		} `json:"delta"`
+	}
+	if err := unmarshalBedrockEventPayload(wrapped, "contentBlockDelta", &delta); err != nil {
+		t.Fatal(err)
+	}
+	if delta.ContentBlockIndex != 0 || delta.Delta.Text != "Hello" {
+		t.Fatalf("unexpected wrapped delta: %+v", delta)
+	}
+
+	direct := []byte(`{"contentBlockIndex":1,"delta":{"text":"world"}}`)
+	if err := unmarshalBedrockEventPayload(direct, "contentBlockDelta", &delta); err != nil {
+		t.Fatal(err)
+	}
+	if delta.ContentBlockIndex != 1 || delta.Delta.Text != "world" {
+		t.Fatalf("unexpected direct delta: %+v", delta)
+	}
+}
+
 func TestResolveBedrockInferenceProfileID(t *testing.T) {
 	cases := []struct {
 		model  string

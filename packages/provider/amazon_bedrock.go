@@ -450,6 +450,9 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 			return
 		}
 		eventType := evt.headerString(":event-type")
+		if eventType == "" {
+			eventType = bedrockEventTypeFromPayload(evt.payload)
+		}
 		messageType := evt.headerString(":message-type")
 		if messageType == "exception" {
 			out <- EventDone{Stop: StopError, Err: fmt.Errorf("bedrock exception (%s): %s", evt.headerString(":exception-type"), string(evt.payload)), Message: finalMsg}
@@ -468,7 +471,7 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 					} `json:"toolUse"`
 				} `json:"start"`
 			}
-			if err := json.Unmarshal(evt.payload, &d); err != nil {
+			if err := unmarshalBedrockEventPayload(evt.payload, "contentBlockStart", &d); err != nil {
 				continue
 			}
 			st := &bedrockBlockState{}
@@ -489,12 +492,13 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 					} `json:"toolUse"`
 				} `json:"delta"`
 			}
-			if err := json.Unmarshal(evt.payload, &d); err != nil {
+			if err := unmarshalBedrockEventPayload(evt.payload, "contentBlockDelta", &d); err != nil {
 				continue
 			}
 			st := contentBlocks[d.ContentBlockIndex]
 			if st == nil {
-				continue
+				st = &bedrockBlockState{}
+				contentBlocks[d.ContentBlockIndex] = st
 			}
 			if d.Delta.Text != "" {
 				st.text.WriteString(d.Delta.Text)
@@ -508,7 +512,7 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 			var d struct {
 				ContentBlockIndex int `json:"contentBlockIndex"`
 			}
-			if err := json.Unmarshal(evt.payload, &d); err != nil {
+			if err := unmarshalBedrockEventPayload(evt.payload, "contentBlockStop", &d); err != nil {
 				continue
 			}
 			st := contentBlocks[d.ContentBlockIndex]
@@ -531,7 +535,7 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 			var d struct {
 				StopReason string `json:"stopReason"`
 			}
-			_ = json.Unmarshal(evt.payload, &d)
+			_ = unmarshalBedrockEventPayload(evt.payload, "messageStop", &d)
 			switch d.StopReason {
 			case "tool_use":
 				stop = StopToolUse
@@ -551,7 +555,7 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 					CacheWriteInputTokens int `json:"cacheWriteInputTokens"`
 				} `json:"usage"`
 			}
-			if err := json.Unmarshal(evt.payload, &d); err == nil {
+			if err := unmarshalBedrockEventPayload(evt.payload, "metadata", &d); err == nil {
 				usage.InputTokens = d.Usage.InputTokens
 				usage.OutputTokens = d.Usage.OutputTokens
 				usage.CacheReadTokens = d.Usage.CacheReadInputTokens
@@ -572,6 +576,32 @@ type bedrockBlockState struct {
 	toolName  string
 	toolArgs  strings.Builder
 	text      strings.Builder
+}
+
+func bedrockEventTypeFromPayload(payload []byte) string {
+	var outer map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &outer); err != nil {
+		return ""
+	}
+	for _, name := range []string{"messageStart", "contentBlockStart", "contentBlockDelta", "contentBlockStop", "messageStop", "metadata"} {
+		if _, ok := outer[name]; ok {
+			return name
+		}
+	}
+	return ""
+}
+
+func unmarshalBedrockEventPayload(payload []byte, eventType string, dst any) error {
+	var outer map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &outer); err == nil {
+		if wrapped, ok := outer[eventType]; ok {
+			return json.Unmarshal(wrapped, dst)
+		}
+	}
+	if err := json.Unmarshal(payload, dst); err != nil {
+		return fmt.Errorf("bedrock: parse %s payload: %w", eventType, err)
+	}
+	return nil
 }
 
 // ---- event-stream binary framing parser ----

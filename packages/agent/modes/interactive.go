@@ -3405,7 +3405,79 @@ func (i *Interactive) doLogout(target string) {
 	}
 }
 
+func providerSetupInfo(provider string) (string, []string, bool) {
+	const docsURL = "https://raw.githubusercontent.com/patriceckhart/zot/main/docs/providers.md"
+	switch provider {
+	case "amazon-bedrock":
+		return "Amazon Bedrock setup", []string{
+			"Amazon Bedrock uses AWS credentials instead of a generic zot API-key entry.",
+			"Configure an AWS profile, IAM keys, bearer token, or role-based credentials.",
+			"",
+			"For Bedrock API keys, set:",
+			"  AWS_BEARER_TOKEN_BEDROCK=...",
+			"  AWS_REGION=us-east-1",
+			"",
+			"Docs:",
+			"  " + docsURL,
+		}, true
+	case "google-vertex":
+		return "Google Vertex AI setup", []string{
+			"Google Vertex AI usually uses Google Cloud credentials and project settings.",
+			"Set a Google API key, application-default credentials, or a service account.",
+			"",
+			"Common environment:",
+			"  GOOGLE_CLOUD_API_KEY=...",
+			"  GOOGLE_CLOUD_PROJECT=...",
+			"  GOOGLE_CLOUD_LOCATION=us-central1",
+			"",
+			"Docs:",
+			"  " + docsURL,
+		}, true
+	case "cloudflare-workers-ai":
+		return "Cloudflare Workers AI setup", []string{
+			"Cloudflare Workers AI needs both an API token and an account ID.",
+			"",
+			"Set:",
+			"  CLOUDFLARE_API_KEY=...",
+			"  CLOUDFLARE_ACCOUNT_ID=...",
+			"",
+			"Docs:",
+			"  " + docsURL,
+		}, true
+	case "cloudflare-ai-gateway":
+		return "Cloudflare AI Gateway setup", []string{
+			"Cloudflare AI Gateway needs an API token, account ID, and gateway ID.",
+			"",
+			"Set:",
+			"  CLOUDFLARE_API_KEY=...",
+			"  CLOUDFLARE_ACCOUNT_ID=...",
+			"  CLOUDFLARE_GATEWAY_ID=...",
+			"",
+			"Docs:",
+			"  " + docsURL,
+		}, true
+	case "azure-openai-responses":
+		return "Azure OpenAI Responses setup", []string{
+			"Azure OpenAI needs an API key plus your Azure endpoint or deployment setup.",
+			"",
+			"Set:",
+			"  AZURE_OPENAI_API_KEY=...",
+			"  AZURE_OPENAI_BASE_URL=https://your-resource.openai.azure.com",
+			"  AZURE_OPENAI_API_VERSION=2024-02-01",
+			"",
+			"Docs:",
+			"  " + docsURL,
+		}, true
+	default:
+		return "", nil, false
+	}
+}
+
 func (i *Interactive) startAPIKeyFlow(provider string) {
+	if title, lines, ok := providerSetupInfo(provider); ok {
+		i.dialog.ShowInfo(title, lines)
+		return
+	}
 	if provider == "kimi" && i.cfg.SetKimiCLIFallbackDisabled != nil {
 		_ = i.cfg.SetKimiCLIFallbackDisabled(false)
 	}
