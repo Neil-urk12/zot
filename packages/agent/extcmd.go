@@ -269,12 +269,24 @@ func extInstall(args []string) error {
 	if _, err := os.Stat(filepath.Join(src, "extension.json")); err != nil {
 		return fmt.Errorf("source lacks extension.json")
 	}
-	name := filepath.Base(src)
+	// Resolve to an absolute, cleaned path before deriving the install
+	// name. Otherwise relative sources like "." or "./" collapse to a
+	// basename of ".", and the destination wrongly resolves to the
+	// extensions/ parent directory (which zot creates on first run),
+	// triggering a false "already exists" failure.
+	absSrc, err := filepath.Abs(src)
+	if err != nil {
+		return err
+	}
+	name := filepath.Base(absSrc)
+	if name == "." || name == ".." || name == string(filepath.Separator) || name == "" {
+		return fmt.Errorf("cannot derive extension name from %q", src)
+	}
 	out := filepath.Join(dest, name)
 	if _, err := os.Stat(out); err == nil {
 		return fmt.Errorf("destination %s already exists; remove it first", out)
 	}
-	if err := copyDir(src, out); err != nil {
+	if err := copyDir(absSrc, out); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "installed %s\n", out)
