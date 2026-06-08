@@ -216,6 +216,61 @@ type bedrockRequest struct {
 	} `json:"toolConfig,omitempty"`
 }
 
+func normalizeBedrockToolResults(msgs []Message) []Message {
+	resultByID := map[string]ToolResultBlock{}
+	for _, m := range msgs {
+		for _, c := range m.Content {
+			if tr, ok := c.(ToolResultBlock); ok {
+				if _, exists := resultByID[tr.CallID]; !exists {
+					resultByID[tr.CallID] = tr
+				}
+			}
+		}
+	}
+
+	out := make([]Message, 0, len(msgs))
+	for _, m := range msgs {
+		copy := m
+		copy.Content = nil
+		var toolCalls []ToolCallBlock
+		for _, c := range m.Content {
+			switch v := c.(type) {
+			case ToolResultBlock:
+				// Bedrock requires toolResult blocks immediately after the
+				// assistant toolUse they answer. Reinsert them from the
+				// assistant pass below instead of preserving their original
+				// location, which may be separated by user text in active
+				// sessions.
+				continue
+			case ToolCallBlock:
+				toolCalls = append(toolCalls, v)
+			}
+			copy.Content = append(copy.Content, c)
+		}
+		if len(copy.Content) > 0 {
+			out = append(out, copy)
+		}
+		if m.Role != RoleAssistant || len(toolCalls) == 0 {
+			continue
+		}
+
+		results := make([]Content, 0, len(toolCalls))
+		for _, tc := range toolCalls {
+			if tr, ok := resultByID[tc.ID]; ok {
+				results = append(results, tr)
+				continue
+			}
+			results = append(results, ToolResultBlock{
+				CallID:  tc.ID,
+				IsError: true,
+				Content: []Content{TextBlock{Text: "tool call did not complete before the next user message"}},
+			})
+		}
+		out = append(out, Message{Role: RoleTool, Content: results, Time: m.Time})
+	}
+	return out
+}
+
 func (c *bedrockClient) buildRequest(req Request) (*bedrockRequest, error) {
 	out := &bedrockRequest{}
 	if req.System != "" {
@@ -226,7 +281,7 @@ func (c *bedrockClient) buildRequest(req Request) (*bedrockRequest, error) {
 	if out.InferenceConfig.MaxTokens == 0 {
 		out.InferenceConfig.MaxTokens = 4096
 	}
-	for _, m := range req.Messages {
+	for _, m := range normalizeBedrockToolResults(req.Messages) {
 		role := string(m.Role)
 		if role == "tool" {
 			role = "user"
@@ -266,6 +321,9 @@ func (c *bedrockClient) buildRequest(req Request) (*bedrockRequest, error) {
 					},
 				})
 			}
+		}
+		if len(bm.Content) == 0 {
+			continue
 		}
 		out.Messages = append(out.Messages, bm)
 	}
@@ -450,6 +508,9 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 			return
 		}
 		eventType := evt.headerString(":event-type")
+		if eventType == "" {
+			eventType = bedrockEventTypeFromPayload(evt.payload)
+		}
 		messageType := evt.headerString(":message-type")
 		if messageType == "exception" {
 			out <- EventDone{Stop: StopError, Err: fmt.Errorf("bedrock exception (%s): %s", evt.headerString(":exception-type"), string(evt.payload)), Message: finalMsg}
@@ -468,7 +529,7 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 					} `json:"toolUse"`
 				} `json:"start"`
 			}
-			if err := json.Unmarshal(evt.payload, &d); err != nil {
+			if err := unmarshalBedrockEventPayload(evt.payload, "contentBlockStart", &d); err != nil {
 				continue
 			}
 			st := &bedrockBlockState{}
@@ -489,12 +550,13 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 					} `json:"toolUse"`
 				} `json:"delta"`
 			}
-			if err := json.Unmarshal(evt.payload, &d); err != nil {
+			if err := unmarshalBedrockEventPayload(evt.payload, "contentBlockDelta", &d); err != nil {
 				continue
 			}
 			st := contentBlocks[d.ContentBlockIndex]
 			if st == nil {
-				continue
+				st = &bedrockBlockState{}
+				contentBlocks[d.ContentBlockIndex] = st
 			}
 			if d.Delta.Text != "" {
 				st.text.WriteString(d.Delta.Text)
@@ -508,7 +570,7 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 			var d struct {
 				ContentBlockIndex int `json:"contentBlockIndex"`
 			}
-			if err := json.Unmarshal(evt.payload, &d); err != nil {
+			if err := unmarshalBedrockEventPayload(evt.payload, "contentBlockStop", &d); err != nil {
 				continue
 			}
 			st := contentBlocks[d.ContentBlockIndex]
@@ -531,7 +593,7 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 			var d struct {
 				StopReason string `json:"stopReason"`
 			}
-			_ = json.Unmarshal(evt.payload, &d)
+			_ = unmarshalBedrockEventPayload(evt.payload, "messageStop", &d)
 			switch d.StopReason {
 			case "tool_use":
 				stop = StopToolUse
@@ -551,7 +613,7 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 					CacheWriteInputTokens int `json:"cacheWriteInputTokens"`
 				} `json:"usage"`
 			}
-			if err := json.Unmarshal(evt.payload, &d); err == nil {
+			if err := unmarshalBedrockEventPayload(evt.payload, "metadata", &d); err == nil {
 				usage.InputTokens = d.Usage.InputTokens
 				usage.OutputTokens = d.Usage.OutputTokens
 				usage.CacheReadTokens = d.Usage.CacheReadInputTokens
@@ -572,6 +634,32 @@ type bedrockBlockState struct {
 	toolName  string
 	toolArgs  strings.Builder
 	text      strings.Builder
+}
+
+func bedrockEventTypeFromPayload(payload []byte) string {
+	var outer map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &outer); err != nil {
+		return ""
+	}
+	for _, name := range []string{"messageStart", "contentBlockStart", "contentBlockDelta", "contentBlockStop", "messageStop", "metadata"} {
+		if _, ok := outer[name]; ok {
+			return name
+		}
+	}
+	return ""
+}
+
+func unmarshalBedrockEventPayload(payload []byte, eventType string, dst any) error {
+	var outer map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &outer); err == nil {
+		if wrapped, ok := outer[eventType]; ok {
+			return json.Unmarshal(wrapped, dst)
+		}
+	}
+	if err := json.Unmarshal(payload, dst); err != nil {
+		return fmt.Errorf("bedrock: parse %s payload: %w", eventType, err)
+	}
+	return nil
 }
 
 // ---- event-stream binary framing parser ----

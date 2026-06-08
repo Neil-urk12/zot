@@ -293,18 +293,6 @@ var Catalog = []Model{
 	// Same model ids as the OpenAI family, but routed through the
 	// ChatGPT Codex OAuth backend rather than api.openai.com.
 	{
-		Provider: "openai-codex", ID: "gpt-5.2", DisplayName: "GPT-5.2",
-		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 1.75, PriceOutput: 14, PriceCacheRead: 0.175,
-		Speculative: true,
-	},
-	{
-		Provider: "openai-codex", ID: "gpt-5.3-codex", DisplayName: "GPT-5.3 Codex",
-		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
-		PriceInput: 1.75, PriceOutput: 14, PriceCacheRead: 0.175,
-		Speculative: true,
-	},
-	{
 		Provider: "openai-codex", ID: "gpt-5.3-codex-spark", DisplayName: "GPT-5.3 Codex Spark",
 		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
 		PriceInput: 1.75, PriceOutput: 14, PriceCacheRead: 0.175,
