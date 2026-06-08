@@ -97,6 +97,15 @@ type PanelSpec struct {
 	Footer string   `json:"footer,omitempty"`
 }
 
+// OpenPanelFromExt is a spontaneous one-way frame an extension can send at
+// any time to open an interactive panel. Unlike the open_panel action inside
+// CommandResponseFromExt, this form is uncoupled from any command invocation
+// and may be sent from a tool handler goroutine or any background context.
+type OpenPanelFromExt struct {
+	Type  string    `json:"type"`  // "open_panel"
+	Panel PanelSpec `json:"panel"`
+}
+
 type PanelRenderFromExt struct {
 	Type    string   `json:"type"`
 	PanelID string   `json:"panel_id"`

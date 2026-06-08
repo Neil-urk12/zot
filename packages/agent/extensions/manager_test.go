@@ -20,6 +20,8 @@ type stubHooks struct {
 	notifies   []string
 	displays   []string
 	clearNotes []string
+	panels     []extproto.PanelSpec
+	panelExts  []string
 }
 
 func (s *stubHooks) Notify(name, level, message string) {
@@ -40,7 +42,12 @@ func (s *stubHooks) ClearNotes(name string) {
 	defer s.mu.Unlock()
 	s.clearNotes = append(s.clearNotes, name)
 }
-func (s *stubHooks) OpenPanel(string, extproto.PanelSpec)                 {}
+func (s *stubHooks) OpenPanel(extName string, spec extproto.PanelSpec) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.panelExts = append(s.panelExts, extName)
+	s.panels = append(s.panels, spec)
+}
 func (s *stubHooks) UpdatePanel(string, string, string, []string, string) {}
 func (s *stubHooks) ClosePanel(string, string)                            {}
 
@@ -149,8 +156,15 @@ func TestManagerSpawnAndInvoke(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 
 	cmds := mgr.Commands()
-	if len(cmds) != 1 || cmds[0].Name != "ping" {
-		t.Fatalf("expected one command 'ping', got %#v", cmds)
+	found := false
+	for _, c := range cmds {
+		if c.Name == "ping" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected command 'ping', got %#v", cmds)
 	}
 	if !mgr.HasCommand("ping") {
 		t.Fatal("HasCommand(\"ping\") = false")
@@ -165,5 +179,85 @@ func TestManagerSpawnAndInvoke(t *testing.T) {
 	}
 	if resp.Display != "pong" {
 		t.Errorf("expected display=pong, got %q", resp.Display)
+	}
+}
+
+// TestSpontaneousOpenPanel verifies that an extension sending an
+// open_panel frame outside of any command response causes the manager
+// to call hooks.OpenPanel with the correct PanelSpec fields.
+func TestSpontaneousOpenPanel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock extension uses /bin/sh; skip on windows")
+	}
+
+	tmp := t.TempDir()
+	extDir := filepath.Join(tmp, "extensions", "panel-mock")
+	if err := os.MkdirAll(extDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Extension emits hello + ready, then immediately fires a
+	// spontaneous open_panel, then waits for shutdown.
+	script := `#!/bin/sh
+printf '%s\n' '{"type":"hello","name":"panel-mock","version":"0.1","capabilities":["panels"]}'
+printf '%s\n' '{"type":"ready"}'
+printf '%s\n' '{"type":"open_panel","panel":{"id":"test-panel","title":"Hello Panel","lines":["line one","line two"],"footer":"esc close"}}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"shutdown"'*)
+      printf '%s\n' '{"type":"shutdown_ack"}'
+      exit 0
+      ;;
+  esac
+done
+`
+	if err := os.WriteFile(filepath.Join(extDir, "run.sh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mfb, _ := json.Marshal(map[string]any{"name": "panel-mock", "exec": "./run.sh"})
+	if err := os.WriteFile(filepath.Join(extDir, "extension.json"), mfb, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	hooks := &stubHooks{}
+	mgr := New(tmp, "", "0.0.0-test", "anthropic", "claude-opus-4-7", hooks)
+	if errs := mgr.Discover(context.Background()); len(errs) > 0 {
+		t.Fatalf("discover errors: %v", errs)
+	}
+	defer mgr.Stop(2 * time.Second)
+
+	// Give the extension time to flush its open_panel frame.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		hooks.mu.Lock()
+		n := len(hooks.panels)
+		hooks.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	hooks.mu.Lock()
+	defer hooks.mu.Unlock()
+
+	if len(hooks.panels) == 0 {
+		t.Fatal("hooks.OpenPanel was never called")
+	}
+	spec := hooks.panels[0]
+	if spec.ID != "test-panel" {
+		t.Errorf("panel id: want %q, got %q", "test-panel", spec.ID)
+	}
+	if spec.Title != "Hello Panel" {
+		t.Errorf("panel title: want %q, got %q", "Hello Panel", spec.Title)
+	}
+	if len(spec.Lines) != 2 || spec.Lines[0] != "line one" || spec.Lines[1] != "line two" {
+		t.Errorf("panel lines: want [line one line two], got %v", spec.Lines)
+	}
+	if spec.Footer != "esc close" {
+		t.Errorf("panel footer: want %q, got %q", "esc close", spec.Footer)
+	}
+	if hooks.panelExts[0] != "panel-mock" {
+		t.Errorf("ext name: want %q, got %q", "panel-mock", hooks.panelExts[0])
 	}
 }

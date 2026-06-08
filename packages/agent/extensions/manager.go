@@ -786,6 +786,11 @@ func (m *Manager) readLoop(ext *Extension, scanner *bufio.Scanner) {
 					}
 				}
 			}
+		case "open_panel":
+			var op extproto.OpenPanelFromExt
+			if err := json.Unmarshal(line, &op); err == nil {
+				m.hooks.OpenPanel(ext.Manifest.Name, op.Panel)
+			}
 		case "panel_render":
 			var pr extproto.PanelRenderFromExt
 			if err := json.Unmarshal(line, &pr); err == nil {

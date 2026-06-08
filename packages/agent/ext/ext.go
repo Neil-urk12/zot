@@ -328,6 +328,17 @@ func (e *Extension) OnPanelKey(panelID string, onKey func(key, text string), onC
 	}
 }
 
+// OpenPanel opens an interactive panel spontaneously from extension code
+// without requiring a slash command. Safe to call from a tool handler goroutine
+// or any background context. The panel receives panel_key events via OnPanelKey
+// and can be dismissed with ClosePanel, exactly as with command-response panels.
+func (e *Extension) OpenPanel(id, title string, lines []string, footer string) {
+	_ = e.send(extproto.OpenPanelFromExt{
+		Type:  "open_panel",
+		Panel: extproto.PanelSpec{ID: id, Title: title, Lines: lines, Footer: footer},
+	})
+}
+
 // RenderPanel pushes a fresh frame for panelID.
 func (e *Extension) RenderPanel(panelID, title string, lines []string, footer string) {
 	_ = e.send(extproto.PanelRenderFromExt{Type: "panel_render", PanelID: panelID, Title: title, Lines: lines, Footer: footer})
