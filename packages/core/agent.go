@@ -502,9 +502,17 @@ func (a *Agent) dropLastAssistantMessage() {
 // and the assembled assistant message (already appended to the transcript).
 func (a *Agent) oneTurn(ctx context.Context, sink func(AgentEvent)) (provider.StopReason, provider.Message, error) {
 	req := provider.Request{
-		Model:     a.Model,
-		System:    a.System,
-		Messages:  a.Messages(),
+		Model:  a.Model,
+		System: a.System,
+		// Repair any dangling tool_use blocks before sending. A turn
+		// aborted mid-flight (cancel, connection drop, ECONNREFUSED to a
+		// dev server, etc.) can leave an assistant tool_use with no
+		// matching tool_result in the live transcript. The load-time
+		// repair in OpenSession only runs on restart, so without this the
+		// next in-process request is rejected by providers like Anthropic
+		// with "tool_use ids were found without tool_result blocks". The
+		// repair is pure and a no-op on already-valid transcripts.
+		Messages:  repairToolUseResultPairs(a.Messages()),
 		Tools:     a.Tools.Specs(),
 		Reasoning: a.Reasoning,
 	}
