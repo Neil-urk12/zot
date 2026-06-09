@@ -4659,11 +4659,11 @@ func (i *Interactive) handleEvent(ev core.AgentEvent) {
 		if e.Stop == provider.StopLength {
 			// The model hit its output-token cap mid-response, so the
 			// reply (often a long write/edit) is truncated. Surface it
-			// explicitly — otherwise the turn just ends and reads like
+			// explicitly, otherwise the turn just ends and reads like
 			// the UI gave up. The agent already requests the model's
 			// full MaxOutput budget, so this means the response genuinely
 			// exceeded that ceiling; ask the user to continue.
-			i.statusErr = "response hit the model's output-token limit and was cut off — ask it to continue"
+			i.statusErr = "response hit the model's output-token limit and was cut off, ask it to continue"
 			i.statusOK = ""
 			return
 		}

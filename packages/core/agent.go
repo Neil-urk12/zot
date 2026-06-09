@@ -24,7 +24,7 @@ type Agent struct {
 
 	// MaxTokens caps the model's output tokens per turn. Zero leaves
 	// the field unset on the provider request, letting each provider
-	// apply its own default (which can be conservative — Bedrock
+	// apply its own default (which can be conservative, e.g. Bedrock
 	// defaults to 4096, truncating long writes/edits). Hosts populate
 	// this from the resolved model's MaxOutput so large single-turn
 	// responses aren't silently cut off with stopReason=length.
