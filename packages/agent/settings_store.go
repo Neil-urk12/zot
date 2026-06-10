@@ -22,6 +22,24 @@ func (configSettingsStore) SetAutoSwarm(enabled bool) error {
 	return SaveConfig(cfg)
 }
 
+func (configSettingsStore) SetRecursiveFileSuggest(enabled bool) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	cfg.RecursiveFileSuggest = &enabled
+	return SaveConfig(cfg)
+}
+
+func (configSettingsStore) SetRespectGitignore(enabled bool) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	cfg.RespectGitignore = &enabled
+	return SaveConfig(cfg)
+}
+
 func (configSettingsStore) SetReasoning(level string) error {
 	cfg, err := LoadConfig()
 	if err != nil {

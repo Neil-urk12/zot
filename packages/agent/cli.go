@@ -944,6 +944,8 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 		Theme:                      theme,
 		InlineImagesEnabled:        initialCfg.InlineImagesEnabled,
 		AutoSwarmEnabled:           initialCfg.AutoSwarmEnabled,
+		RecursiveFileSuggest:       initialCfg.RecursiveFileSuggest,
+		RespectGitignore:           initialCfg.RespectGitignore,
 		ThemeName:                  initialCfg.Theme,
 		ExtensionThemes:            extMgr.ThemeOptions,
 		AutoSwarmSystemAddendum:    AutoSwarmSystemAddendum,

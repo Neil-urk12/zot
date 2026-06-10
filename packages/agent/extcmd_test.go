@@ -117,10 +117,10 @@ func TestCopyDirRespectsGitignore(t *testing.T) {
 
 func TestGitignoreNegation(t *testing.T) {
 	g := loadGitignoreFromString("build/\n!build/keep.txt\n")
-	if !g.match("build", true) {
+	if !g.Match("build", true) {
 		t.Fatal("expected build/ dir to be ignored")
 	}
-	if g.match("build/keep.txt", false) {
+	if g.Match("build/keep.txt", false) {
 		t.Fatal("expected build/keep.txt to be re-included by negation")
 	}
 }

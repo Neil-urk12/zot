@@ -8,8 +8,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sahilm/fuzzy"
+
+	"github.com/patriceckhart/zot/packages/ignore"
 	"github.com/patriceckhart/zot/packages/tui"
 )
+
+// recursiveScanLimits bound the recursive walk so the picker stays
+// responsive in very large repos. Hitting either cap stops the walk
+// early; the entries gathered so far are still searchable.
+const (
+	maxRecursiveEntries = 5000
+	maxRecursiveDepth   = 12
+)
+
+// alwaysSkipDir is never descended into during a recursive scan,
+// regardless of .gitignore. .git is a repo-internal directory that
+// real projects rarely list in their own .gitignore yet never want
+// surfaced as an @-mention target.
+const alwaysSkipDir = ".git"
 
 // fileSuggester provides an @-triggered file/directory picker popup.
 // Type "@" followed by an optional filter to list files in the working
@@ -20,8 +37,17 @@ type fileSuggester struct {
 	lastMatches []fileEntry
 	cwd         string // project root
 	browseRel   string // relative path from cwd we're currently browsing ("" = cwd itself)
-	cachedDir   string // absolute directory we last scanned
-	cachedAll   []fileEntry
+	// recursive enables a whole-tree fuzzy search instead of
+	// directory-by-directory browsing. Mirrors the persisted
+	// recursive_file_suggest setting; toggled live from /settings.
+	recursive bool
+	// respectGitignore drops entries matched by the project's root
+	// .gitignore (and always .git) from both the flat and recursive
+	// listings. Mirrors the persisted respect_gitignore setting; on by
+	// default. Toggled live from /settings.
+	respectGitignore bool
+	cachedDir        string // absolute directory we last scanned
+	cachedAll        []fileEntry
 	// cachedMTime is the mtime of cachedDir at the time of the scan.
 	// scan() compares the current mtime against this on every call and
 	// re-reads the directory if it has changed, so files or folders
@@ -37,7 +63,10 @@ type fileEntry struct {
 	isDir bool
 }
 
-func newFileSuggester() *fileSuggester { return &fileSuggester{} }
+// newFileSuggester returns a picker that respects .gitignore by
+// default. Callers override via SetRespectGitignore once the persisted
+// setting is known.
+func newFileSuggester() *fileSuggester { return &fileSuggester{respectGitignore: true} }
 
 // SetCWD updates the project root.
 func (s *fileSuggester) SetCWD(cwd string) {
@@ -47,6 +76,32 @@ func (s *fileSuggester) SetCWD(cwd string) {
 		s.cachedDir = ""
 		s.cachedAll = nil
 	}
+}
+
+// SetRecursive toggles whole-tree fuzzy search. Switching modes drops
+// the cache and resets the browse position so the next render reflects
+// the new mode immediately.
+func (s *fileSuggester) SetRecursive(on bool) {
+	if s.recursive == on {
+		return
+	}
+	s.recursive = on
+	s.browseRel = ""
+	s.cachedDir = ""
+	s.cachedAll = nil
+	s.cursor = 0
+}
+
+// SetRespectGitignore toggles .gitignore filtering for both modes.
+// Switching drops the cache so the next scan reflects the new state.
+func (s *fileSuggester) SetRespectGitignore(on bool) {
+	if s.respectGitignore == on {
+		return
+	}
+	s.respectGitignore = on
+	s.cachedDir = ""
+	s.cachedAll = nil
+	s.cursor = 0
 }
 
 // browseDir returns the absolute directory currently being browsed.
@@ -66,6 +121,9 @@ func (s *fileSuggester) browseDir() string {
 // supports). A failed stat falls through to a fresh ReadDir rather
 // than returning a stale cache so transient errors self-heal.
 func (s *fileSuggester) scan() []fileEntry {
+	if s.recursive {
+		return s.scanRecursive()
+	}
 	dir := s.browseDir()
 	var mtime time.Time
 	if info, err := os.Stat(dir); err == nil {
@@ -78,12 +136,24 @@ func (s *fileSuggester) scan() []fileEntry {
 	if err != nil {
 		return nil
 	}
+	var ig *ignore.Gitignore
+	if s.respectGitignore {
+		ig = ignore.Load(s.cwd)
+	}
 	var all []fileEntry
 	for _, e := range entries {
 		name := e.Name()
 		rel := name
 		if s.browseRel != "" {
 			rel = filepath.Join(s.browseRel, name)
+		}
+		if s.respectGitignore {
+			if e.IsDir() && name == alwaysSkipDir {
+				continue
+			}
+			if ig.Match(filepath.ToSlash(rel), e.IsDir()) {
+				continue
+			}
 		}
 		all = append(all, fileEntry{
 			name:  name,
@@ -99,6 +169,85 @@ func (s *fileSuggester) scan() []fileEntry {
 	})
 	s.cachedAll = all
 	s.cachedDir = dir
+	s.cachedMTime = mtime
+	return all
+}
+
+// scanRecursive walks the whole project tree below cwd and returns
+// every file and directory as a fileEntry whose rel is the path
+// relative to cwd. The walk honors the project's root .gitignore (so
+// build outputs, dependency directories, and tool caches like
+// .terraform/.terragrunt-cache stay out of the picker) plus an
+// unconditional .git skip, and stops once it hits the entry/depth caps.
+//
+// Results are cached by cwd + mtime of cwd. Unlike the flat scan a
+// single mtime can't catch every nested change, so the cache is best
+// effort; Invalidate() (called on each keystroke path that matters)
+// and the explicit cache drops on toggle keep it fresh enough for an
+// interactive picker.
+func (s *fileSuggester) scanRecursive() []fileEntry {
+	root := s.cwd
+	var mtime time.Time
+	if info, err := os.Stat(root); err == nil {
+		mtime = info.ModTime()
+	}
+	if s.cachedDir == root && s.cachedAll != nil && !mtime.IsZero() && mtime.Equal(s.cachedMTime) {
+		return s.cachedAll
+	}
+
+	var ig *ignore.Gitignore
+	if s.respectGitignore {
+		ig = ignore.Load(root)
+	}
+	var all []fileEntry
+	rootSep := strings.Count(root, string(os.PathSeparator))
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if path == root {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return nil
+		}
+		if s.respectGitignore {
+			// .gitignore patterns are matched against slash-separated paths.
+			if ig.Match(filepath.ToSlash(rel), d.IsDir()) {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+		}
+		if d.IsDir() {
+			// .git is always pruned: it's never a useful @-mention target
+			// and would otherwise blow the entry budget even when
+			// gitignore filtering is off.
+			if d.Name() == alwaysSkipDir {
+				return filepath.SkipDir
+			}
+			if strings.Count(path, string(os.PathSeparator))-rootSep >= maxRecursiveDepth {
+				return filepath.SkipDir
+			}
+		}
+		all = append(all, fileEntry{
+			name:  rel,
+			rel:   rel,
+			isDir: d.IsDir(),
+		})
+		if len(all) >= maxRecursiveEntries {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+
+	s.cachedAll = all
+	s.cachedDir = root
 	s.cachedMTime = mtime
 	return all
 }
@@ -121,6 +270,11 @@ func extractAtQuery(input string) (string, bool) {
 }
 
 // matches returns file entries matching the current @-query.
+//
+// An empty query returns every entry in scan order. A non-empty query
+// is ranked with sahilm/fuzzy: in recursive mode the pattern is matched
+// against each entry's path relative to cwd (so "foobar" can find
+// "src/foo/bar.go"); in flat mode it matches the entry's display name.
 func (s *fileSuggester) matches(input string) []fileEntry {
 	query, ok := extractAtQuery(input)
 	if !ok {
@@ -130,14 +284,22 @@ func (s *fileSuggester) matches(input string) []fileEntry {
 	if len(all) == 0 {
 		return nil
 	}
-	needle := strings.ToLower(query)
-	if needle == "" {
+	if query == "" {
 		return all
 	}
-	var out []fileEntry
-	for _, e := range all {
-		if strings.Contains(strings.ToLower(e.name), needle) {
-			out = append(out, e)
+	haystack := make([]string, len(all))
+	for i, e := range all {
+		if s.recursive {
+			haystack[i] = e.rel
+		} else {
+			haystack[i] = e.name
+		}
+	}
+	ranked := fuzzy.Find(query, haystack)
+	out := make([]fileEntry, 0, len(ranked))
+	for _, m := range ranked {
+		if m.Index >= 0 && m.Index < len(all) {
+			out = append(out, all[m.Index])
 		}
 	}
 	return out
@@ -176,8 +338,12 @@ func (s *fileSuggester) Down() {
 }
 
 // Right opens the selected directory, descending into it.
-// Returns true if a directory was entered.
+// Returns true if a directory was entered. Disabled in recursive mode,
+// where the whole tree is already flattened into the result list.
 func (s *fileSuggester) Right() bool {
+	if s.recursive {
+		return false
+	}
 	m := s.lastMatches
 	if len(m) == 0 || s.cursor >= len(m) {
 		return false
@@ -194,8 +360,11 @@ func (s *fileSuggester) Right() bool {
 }
 
 // Left goes back to the parent directory.
-// Returns true if we moved up.
+// Returns true if we moved up. Disabled in recursive mode.
 func (s *fileSuggester) Left() bool {
+	if s.recursive {
+		return false
+	}
 	if s.browseRel == "" {
 		return false
 	}
@@ -283,10 +452,13 @@ func (s *fileSuggester) Render(input string, th tui.Theme, width int) []string {
 	}
 
 	out = append(out, "")
-	hint := "  \u2191/\u2193 navigate - enter select - esc cancel"
-	if s.browseRel != "" {
+	var hint string
+	switch {
+	case s.recursive:
+		hint = "  \u2191/\u2193 navigate - enter select - esc cancel (recursive)"
+	case s.browseRel != "":
 		hint = "  \u2191/\u2193 navigate - \u2192 open - \u2190 back - enter select - esc cancel"
-	} else {
+	default:
 		hint = "  \u2191/\u2193 navigate - \u2192 open dir - enter select - esc cancel"
 	}
 	out = append(out, th.FG256(th.Muted, hint))
