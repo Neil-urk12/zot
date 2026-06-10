@@ -176,6 +176,54 @@ func TestFileSuggesterFuzzyMatch(t *testing.T) {
 	}
 }
 
+// TestFileSuggesterFlatBrowseIntoDirIgnoresStaleFilter reproduces the
+// reported bug: in flat (non-recursive) mode, typing "@eda" to find a
+// directory then opening it with Right must show that directory's
+// contents, not re-apply the "eda" filter inside it (which matches
+// nothing). The interactive layer clears the @-query when descending,
+// so here we model that by browsing with Right and then matching an
+// empty query against the new level.
+func TestFileSuggesterFlatBrowseIntoDirIgnoresStaleFilter(t *testing.T) {
+	tmp := t.TempDir()
+	// eda/rjg/enk-1150 with a file inside, plus a sibling so the filter
+	// is meaningful at the top level.
+	if err := os.MkdirAll(filepath.Join(tmp, "eda", "rjg", "enk-1150"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "eda", "rjg", "enk-1150", "pipeline.py"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmp, "unrelated"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newFileSuggester()
+	s.SetCWD(tmp) // flat mode
+
+	// Top level: "@eda" highlights the eda/ directory. Render populates
+	// lastMatches, which Right/Left act on (it runs every frame before
+	// key handling in the live UI).
+	s.lastMatches = s.matches("@eda")
+	if !containsEntry(s.lastMatches, "eda", true) {
+		t.Fatalf("@eda did not match eda/: %#v", s.lastMatches)
+	}
+	s.cursor = 0 // eda/ is the (only) match, selected.
+
+	// Open it. After the interactive layer clears the query, the picker
+	// is browsing eda/ with an empty filter and must show rjg/.
+	if !s.Right() {
+		t.Fatal("Right() did not open eda/")
+	}
+	if got := s.matches("@"); !containsEntry(got, "rjg", true) {
+		t.Fatalf("after opening eda/, empty filter did not show rjg/: %#v", got)
+	}
+	// The stale filter would have shown nothing: confirm that's the
+	// behavior the fix avoids.
+	if got := s.matches("@eda"); len(got) != 0 {
+		t.Fatalf("stale @eda filter inside eda/ unexpectedly matched: %#v", got)
+	}
+}
+
 // TestFileSuggesterRecursiveMatch verifies recursive mode flattens the
 // tree and matches against the cwd-relative path, so a pattern can
 // span directory boundaries.
