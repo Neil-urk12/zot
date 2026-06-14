@@ -61,6 +61,9 @@ type Config struct {
 	// ("low", "medium", "high"). Empty = no reasoning.
 	Reasoning string
 
+	// Temperature sets the sampling temperature. Nil = provider default.
+	Temperature *float32
+
 	// MaxSteps caps the agent loop iterations per Prompt call.
 	// 0 uses the default (50).
 	MaxSteps int
@@ -112,6 +115,7 @@ func New(cfg Config) (*Runtime, error) {
 		SystemPrompt:       cfg.SystemPrompt,
 		AppendSystemPrompt: cfg.AppendSystemPrompt,
 		Reasoning:          cfg.Reasoning,
+		Temperature:        cfg.Temperature,
 		MaxSteps:           cfg.MaxSteps,
 		Tools:              cfg.Tools,
 		NoTools:            cfg.NoTools,

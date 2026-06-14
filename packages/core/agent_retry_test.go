@@ -144,3 +144,17 @@ func TestAgentPropagatesMaxTokens(t *testing.T) {
 		t.Fatalf("request MaxTokens = %d; want 64000 (Agent.MaxTokens not propagated)", client.lastReq.MaxTokens)
 	}
 }
+
+func TestAgentPropagatesTemperature(t *testing.T) {
+	client := &captureClient{}
+	a := NewAgent(client, "fake-model", "system", Registry{})
+	temp := float32(0)
+	a.Temperature = &temp
+
+	if err := a.Prompt(context.Background(), "hello", nil, nil); err != nil {
+		t.Fatalf("Prompt returned %v", err)
+	}
+	if client.lastReq.Temperature == nil || *client.lastReq.Temperature != temp {
+		t.Fatalf("request Temperature = %v; want %v", client.lastReq.Temperature, temp)
+	}
+}

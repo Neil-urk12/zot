@@ -15,12 +15,13 @@ import (
 // Agent is a stateful conversation bound to a provider client, a model,
 // and a set of tools.
 type Agent struct {
-	Client    provider.Client
-	Model     string
-	System    string
-	Tools     Registry
-	MaxSteps  int
-	Reasoning string
+	Client      provider.Client
+	Model       string
+	System      string
+	Tools       Registry
+	MaxSteps    int
+	Reasoning   string
+	Temperature *float32
 
 	// MaxTokens caps the model's output tokens per turn. Zero leaves
 	// the field unset on the provider request, letting each provider
@@ -520,10 +521,11 @@ func (a *Agent) oneTurn(ctx context.Context, sink func(AgentEvent)) (provider.St
 		// next in-process request is rejected by providers like Anthropic
 		// with "tool_use ids were found without tool_result blocks". The
 		// repair is pure and a no-op on already-valid transcripts.
-		Messages:  repairToolUseResultPairs(a.Messages()),
-		Tools:     a.Tools.Specs(),
-		Reasoning: a.Reasoning,
-		MaxTokens: a.MaxTokens,
+		Messages:    repairToolUseResultPairs(a.Messages()),
+		Tools:       a.Tools.Specs(),
+		Reasoning:   a.Reasoning,
+		MaxTokens:   a.MaxTokens,
+		Temperature: a.Temperature,
 	}
 	stream, err := a.Client.Stream(ctx, req)
 	if err != nil {
