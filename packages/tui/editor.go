@@ -127,9 +127,10 @@ func (e *Editor) HandleKey(k Key) (submit bool) {
 		}
 		e.insert(string(k.Rune))
 	case KeyEnter:
-		// Shift+Enter would be a separate key in some terminals; we treat
-		// the literal newline byte as Enter. Newline on submit is a decision
-		// for the outer UI via slash commands. Here Enter submits.
+		if k.Shift || k.Alt {
+			e.newline()
+			return false
+		}
 		return true
 	case KeyBackspace:
 		if k.Alt {

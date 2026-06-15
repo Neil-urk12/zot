@@ -532,8 +532,8 @@ func (i *Interactive) Run(ctx context.Context) error {
 	// enter the alternate-screen buffer (CSI ?1049h). The renderer emits
 	// chat as normal terminal flow/scrollback and redraws only the live
 	// input/status block on normal typing.
-	_, _ = term.Write([]byte(tui.SeqBracketedPasteOn + tui.SeqResetScrollRegion + tui.SeqDeleteKittyImages + tui.SeqClearScreenNoHome + tui.SeqClearScrollback + tui.MoveTo(1, 1)))
-	defer term.Write([]byte(tui.SeqResetScrollRegion + tui.SeqDeleteKittyImages + tui.SeqBracketedPasteOff + tui.SeqShowCursor))
+	_, _ = term.Write([]byte(tui.SeqBracketedPasteOn + tui.SeqEnhancedKeyboardOn + tui.SeqResetScrollRegion + tui.SeqDeleteKittyImages + tui.SeqClearScreenNoHome + tui.SeqClearScrollback + tui.MoveTo(1, 1)))
+	defer term.Write([]byte(tui.SeqResetScrollRegion + tui.SeqDeleteKittyImages + tui.SeqEnhancedKeyboardOff + tui.SeqBracketedPasteOff + tui.SeqShowCursor))
 
 	// Streaming pacer: drains buffered text deltas at a steady rate
 	// so typewriter feel is identical across providers regardless of
@@ -2040,8 +2040,8 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 	// messages are queued and delivered as follow-up turns when the
 	// current turn ends. See the submit handler below.
 
-	if k.Kind == tui.KeyEnter && k.Alt {
-		i.ed.HandleKey(tui.Key{Kind: tui.KeyRune, Rune: '\n', Alt: true})
+	if k.Kind == tui.KeyEnter && (k.Alt || k.Shift) {
+		i.ed.HandleKey(k)
 		return false
 	}
 

@@ -107,6 +107,13 @@ const (
 	SeqDeleteKittyImages = "\x1b_Ga=d\x1b\\"
 	SeqBracketedPasteOn  = "\x1b[?2004h"
 	SeqBracketedPasteOff = "\x1b[?2004l"
+	// Request enhanced keyboard reporting where supported. Kitty-style
+	// keyboard protocol covers Ghostty, Kitty, VS Code's integrated
+	// terminal, and recent xterm.js builds. Xterm modifyOtherKeys is a
+	// useful fallback for terminals/tmux configurations that expose
+	// modified Enter as CSI 27;<mod>;<code>~.
+	SeqEnhancedKeyboardOn  = "\x1b[>1u\x1b[>4;2m"
+	SeqEnhancedKeyboardOff = "\x1b[<u\x1b[>4m"
 	// Basic mouse tracking + SGR extended coordinates. Used only
 	// when explicitly enabled by the interactive mode (currently VS
 	// Code terminal) so terminals with good native scrolling, like
