@@ -188,6 +188,13 @@ func ProbeAPIKey(ctx context.Context, provider, key string) error {
 	case "github-copilot":
 		return nil
 	default:
+		// Custom providers are registered with the auth package at startup
+		// from models.json. Some self-hosted or enterprise gateways do not
+		// expose a model-list endpoint, so accept and store the key without
+		// probing just like Bedrock/Azure.
+		if isExtraAPIKeyProvider(provider) {
+			return nil
+		}
 		return fmt.Errorf("unknown provider %q", provider)
 	}
 

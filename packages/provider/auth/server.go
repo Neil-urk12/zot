@@ -95,6 +95,27 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.srv.Shutdown(ctx)
 }
 
+// extraAPIKeyProviders holds custom provider names registered at
+// startup from models.json. These are accepted by the login flow
+// alongside the built-in APIKeyProviders list.
+var extraAPIKeyProviders []string
+
+// SetExtraAPIKeyProviders registers additional provider names that
+// should be accepted by the API-key login flow. Call after loading user
+// models so custom providers appear in the /login picker.
+func SetExtraAPIKeyProviders(names []string) {
+	extraAPIKeyProviders = names
+}
+
+func isExtraAPIKeyProvider(p string) bool {
+	for _, name := range extraAPIKeyProviders {
+		if p == name {
+			return true
+		}
+	}
+	return false
+}
+
 // isKnownAPIKeyProvider reports whether the given provider supports
 // API-key login through the loopback flow. OAuth-only paths are handled
 // elsewhere (manager.StartOAuth).
@@ -104,7 +125,7 @@ func isKnownAPIKeyProvider(p string) bool {
 			return true
 		}
 	}
-	return false
+	return isExtraAPIKeyProvider(p)
 }
 
 func apiKeyProviderMessage() string {

@@ -165,6 +165,72 @@ func TestResolveOllamaUsesModelBaseURLBeforeDefault(t *testing.T) {
 	}
 }
 
+func TestResolveCustomProviderModelBaseURLBeatsProviderBaseURL(t *testing.T) {
+	t.Setenv("ZOT_HOME", t.TempDir())
+	t.Setenv("MY_COMPANY_API_KEY", "test-key")
+	path := filepath.Join(t.TempDir(), "models.json")
+	if err := os.WriteFile(path, []byte(`{
+		"providers": {
+			"my-company": {
+				"baseUrl": "https://provider.example.com/v1",
+				"api": "openai",
+				"models": [
+					{"id": "fast", "baseUrl": "https://model.example.com/v1"}
+				]
+			}
+		}
+	}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	models, warnings := provider.LoadUserModelsWithWarnings(path)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	provider.SetLiveModels(nil)
+	provider.SetUserModels(models)
+	t.Cleanup(func() { provider.SetLiveModels(nil) })
+
+	r, err := Resolve(Args{Provider: "my-company", Model: "fast"}, true)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if r.BaseURL != "https://model.example.com/v1" {
+		t.Fatalf("BaseURL = %q, want model-level baseUrl", r.BaseURL)
+	}
+}
+
+func TestResolveCustomProviderInsecureFromModelsJSONBaseURL(t *testing.T) {
+	t.Setenv("ZOT_HOME", t.TempDir())
+	t.Setenv("LOCAL_PROXY_API_KEY", "test-key")
+	path := filepath.Join(t.TempDir(), "models.json")
+	if err := os.WriteFile(path, []byte(`{
+		"providers": {
+			"local-proxy": {
+				"baseUrl": "https://proxy.example.com/v1",
+				"api": "openai",
+				"models": [{"id": "default"}]
+			}
+		}
+	}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	models, warnings := provider.LoadUserModelsWithWarnings(path)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	provider.SetLiveModels(nil)
+	provider.SetUserModels(models)
+	t.Cleanup(func() { provider.SetLiveModels(nil) })
+
+	r, err := Resolve(Args{Provider: "local-proxy", Model: "default", InsecureTLS: true}, true)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if !r.InsecureTLS {
+		t.Fatal("InsecureTLS must be set for --insecure with models.json custom baseUrl")
+	}
+}
+
 func TestResolveOllamaFallsBackToDefaultBaseURL(t *testing.T) {
 	t.Setenv("ZOT_HOME", t.TempDir())
 	provider.SetLiveModels(nil)

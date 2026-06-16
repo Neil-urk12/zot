@@ -11,6 +11,15 @@ import (
 	"time"
 )
 
+func TestProbeAPIKeyAcceptsExtraProviderWithoutProbe(t *testing.T) {
+	SetExtraAPIKeyProviders([]string{"my-company"})
+	t.Cleanup(func() { SetExtraAPIKeyProviders(nil) })
+
+	if err := ProbeAPIKey(context.Background(), "my-company", "test-key"); err != nil {
+		t.Fatalf("ProbeAPIKey custom provider: %v", err)
+	}
+}
+
 func TestStoreRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(filepath.Join(dir, "auth.json"))

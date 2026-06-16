@@ -192,6 +192,11 @@ func defaultModelForProvider(prov string) string {
 	case "github-copilot":
 		return "claude-sonnet-4.5"
 	default:
+		// Custom providers: pick the first model from the catalog for
+		// that provider, or fall back to the global default.
+		if models := provider.ModelsForProvider(prov); len(models) > 0 {
+			return models[0].ID
+		}
 		return provider.DefaultModel.ID
 	}
 }
@@ -214,6 +219,18 @@ var knownProviders = []string{
 }
 
 func isKnownProvider(name string) bool {
+	for _, p := range knownProviders {
+		if p == name {
+			return true
+		}
+	}
+	_, ok := provider.CustomProviders()[name]
+	return ok
+}
+
+// isBuiltinProvider reports whether name is in the hardcoded
+// knownProviders list (not a user-defined custom provider).
+func isBuiltinProvider(name string) bool {
 	for _, p := range knownProviders {
 		if p == name {
 			return true
@@ -285,6 +302,9 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 	if !isKnownProvider(provName) {
 		// Unknown provider (maybe removed or renamed). Fall back to
 		// the first provider that has credentials, or anthropic.
+		// Custom providers (from models.json) are already accepted
+		// by isKnownProvider, so we only reach here for truly unknown
+		// names.
 		provName = "anthropic"
 		if _, _, _, err := ResolveCredentialFull("openai", ""); err == nil {
 			provName = "openai"
@@ -318,6 +338,14 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 		method = "apikey"
 	} else {
 		cred, method, accountID, credErr = ResolveCredentialFull(provName, args.APIKey)
+	}
+
+	// Persist --api-key for custom providers so subsequent runs don't
+	// need to pass it again.
+	if !isBuiltinProvider(provName) && args.APIKey != "" {
+		if store := AuthStoreFor(); store != nil {
+			_ = store.SetAPIKey(provName, args.APIKey)
+		}
 	}
 
 	// If the user did NOT explicitly pick a provider and the default one
@@ -375,6 +403,24 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 		}
 		err = nil
 	}
+	// Custom providers are open-catalogue like ollama: any model id the
+	// endpoint understands is valid. Use the provider-level base URL.
+	if err != nil {
+		if cfg, ok := provider.CustomProviders()[provName]; ok {
+			resolvedModel = provider.Model{
+				Provider:    provName,
+				ID:          model,
+				DisplayName: model,
+				BaseURL:     cfg.BaseURL,
+				Source:      "user",
+			}
+			err = nil
+		}
+	} else if cfg, ok := provider.CustomProviders()[provName]; ok && resolvedModel.BaseURL == "" && cfg.BaseURL != "" {
+		// Fall back to the provider-level base URL when the model does
+		// not define its own endpoint.
+		resolvedModel.BaseURL = cfg.BaseURL
+	}
 	if err != nil {
 		// The model the user (or persisted config) asked for is no
 		// longer in the active catalogue — they probably removed it
@@ -410,7 +456,7 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 		model = fm.ID
 	}
 
-	explicitBaseURL := args.BaseURL != ""
+	explicitBaseURL := args.BaseURL != "" || (resolvedModel.Source == "user" && resolvedModel.BaseURL != "")
 
 	// If the model defines a base URL (e.g. local ollama) and the
 	// user didn't pass --base-url, use the model's URL. For ollama,
@@ -722,6 +768,15 @@ func (r Resolved) NewClient() provider.Client {
 	case "cloudflare-ai-gateway":
 		return wrap(provider.NewCloudflareAIGateway(r.Credential, r.BaseURL))
 	default:
+		// Custom providers: choose wire format from the models.json api field.
+		if cfg, ok := provider.CustomProviders()[r.Provider]; ok {
+			switch cfg.API {
+			case "anthropic":
+				return wrap(provider.NewAnthropicCompat(r.Provider, r.Credential, r.BaseURL))
+			default: // "openai"
+				return wrap(provider.NewOpenAICompat(r.Provider, r.Credential, r.BaseURL, ""))
+			}
+		}
 		if r.AuthMethod == "oauth" {
 			inner := wrap(provider.NewAnthropicOAuth(r.Credential, r.BaseURL))
 			return r.wrapWithRefresh(inner)
