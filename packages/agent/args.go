@@ -74,6 +74,9 @@ type Args struct {
 	// skill discovery, including built-ins.
 	WithSkills bool
 
+	// InsecureTLS skips TLS verification for custom inference endpoints.
+	InsecureTLS bool
+
 	// NoYolo turns on per-tool confirmation. Before each tool
 	// invocation the TUI prompts the user with the tool name + args
 	// and waits for an explicit yes/no. The user can also pick
@@ -190,6 +193,8 @@ func ParseArgs(in []string) (Args, error) {
 		case "--with-skills", "--with-skill":
 			// Deprecated no-op: user skills are loaded by default.
 			a.WithSkills = true
+		case "--insecure":
+			a.InsecureTLS = true
 		case "--no-yolo":
 			a.NoYolo = true
 		case "--reasoning":
@@ -373,6 +378,7 @@ func PrintHelp(version string) {
 		row{"--model ID", "model id (see --list-models)"},
 		row{"--api-key KEY", "api key for this run (env / auth.json fallback)"},
 		row{"--base-url URL", "override provider api base url"},
+		row{"--insecure", "skip TLS certificate verification (for self-signed-cert endpoints)"},
 		row{"--reasoning off|minimum|low|medium|high|maximum", "set thinking level on supported models"},
 		row{"--temperature N", "sampling temperature, 0 to 2 (omit for provider default)"},
 	)

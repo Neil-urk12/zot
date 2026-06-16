@@ -420,6 +420,11 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 		args.BaseURL = "http://localhost:11434"
 	}
 
+	provider.InsecureSkipVerify = (args.InsecureTLS || cfg.Insecure) && args.BaseURL != ""
+	if provider.InsecureSkipVerify {
+		provider.ApplyInsecureTLS()
+	}
+
 	// If the model has a base URL, credentials are optional (local
 	// models like ollama don't need real API keys).
 	if resolvedModel.BaseURL != "" && credErr != nil {

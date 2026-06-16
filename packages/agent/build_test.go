@@ -211,3 +211,62 @@ func TestCanonicalProviderAliasesAreKnown(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveInsecureOnlyWithCustomBaseURL(t *testing.T) {
+	orig := provider.InsecureSkipVerify
+	t.Cleanup(func() { provider.InsecureSkipVerify = orig })
+
+	t.Setenv("ZOT_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	// no --base-url: must stay false even with --insecure.
+	provider.InsecureSkipVerify = false
+	_, err := Resolve(Args{Provider: "openai", InsecureTLS: true}, false)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if provider.InsecureSkipVerify {
+		t.Fatal("InsecureSkipVerify must not be set without a custom base URL")
+	}
+
+	// --base-url + --insecure: must be true.
+	provider.InsecureSkipVerify = false
+	_, err = Resolve(Args{Provider: "openai", InsecureTLS: true, BaseURL: "https://my-llm.internal/v1"}, false)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !provider.InsecureSkipVerify {
+		t.Fatal("InsecureSkipVerify must be set with --insecure and --base-url")
+	}
+}
+
+func TestResolveInsecureFromConfig(t *testing.T) {
+	orig := provider.InsecureSkipVerify
+	t.Cleanup(func() { provider.InsecureSkipVerify = orig })
+
+	t.Setenv("ZOT_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	if err := SaveConfig(Config{Provider: "openai", Insecure: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// no --base-url: must stay false.
+	provider.InsecureSkipVerify = false
+	_, err := Resolve(Args{Provider: "openai"}, false)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if provider.InsecureSkipVerify {
+		t.Fatal("InsecureSkipVerify must not be set without a custom base URL")
+	}
+
+	// --base-url: must be true.
+	provider.InsecureSkipVerify = false
+	_, err = Resolve(Args{Provider: "openai", BaseURL: "https://my-llm.internal/v1"}, false)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !provider.InsecureSkipVerify {
+		t.Fatal("InsecureSkipVerify must be set when config insecure=true and --base-url is provided")
+	}
+}
