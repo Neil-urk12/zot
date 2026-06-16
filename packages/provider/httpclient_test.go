@@ -6,22 +6,24 @@ import (
 	"testing"
 )
 
-func TestApplyInsecureTLSSetsDefaultTransport(t *testing.T) {
+func TestNewHTTPClientDoesNotChangeDefaultTransport(t *testing.T) {
 	orig := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = orig })
 
-	ApplyInsecureTLS()
-
-	tr, ok := http.DefaultTransport.(*http.Transport)
+	client := NewHTTPClient(true)
+	if http.DefaultTransport != orig {
+		t.Fatal("NewHTTPClient must not mutate http.DefaultTransport")
+	}
+	tr, ok := client.Transport.(*http.Transport)
 	if !ok {
-		t.Fatalf("expected *http.Transport, got %T", http.DefaultTransport)
+		t.Fatalf("expected *http.Transport, got %T", client.Transport)
 	}
 	if tr.TLSClientConfig == nil || !tr.TLSClientConfig.InsecureSkipVerify {
-		t.Fatal("expected InsecureSkipVerify=true in TLS config")
+		t.Fatal("expected scoped InsecureSkipVerify=true in TLS config")
 	}
 }
 
-func TestInsecureClientReachesTLSServer(t *testing.T) {
+func TestScopedInsecureClientReachesTLSServer(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -30,20 +32,23 @@ func TestInsecureClientReachesTLSServer(t *testing.T) {
 	orig := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = orig })
 
-	client := &http.Client{}
-
-	if _, err := client.Get(srv.URL); err == nil {
-		t.Fatal("expected TLS error with default transport, got nil")
+	secureClient := NewHTTPClient(false)
+	if _, err := secureClient.Get(srv.URL); err == nil {
+		t.Fatal("expected TLS error with secure client, got nil")
 	}
 
-	ApplyInsecureTLS()
-
-	resp, err := client.Get(srv.URL)
+	insecureClient := NewHTTPClient(true)
+	resp, err := insecureClient.Get(srv.URL)
 	if err != nil {
-		t.Fatalf("request failed after ApplyInsecureTLS: %v", err)
+		t.Fatalf("request failed with scoped insecure client: %v", err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d", resp.StatusCode)
+	}
+
+	defaultClient := &http.Client{}
+	if _, err := defaultClient.Get(srv.URL); err == nil {
+		t.Fatal("default client must still reject self-signed TLS")
 	}
 }

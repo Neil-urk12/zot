@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -212,37 +213,35 @@ func TestCanonicalProviderAliasesAreKnown(t *testing.T) {
 	}
 }
 
-func TestResolveInsecureOnlyWithCustomBaseURL(t *testing.T) {
-	orig := provider.InsecureSkipVerify
-	t.Cleanup(func() { provider.InsecureSkipVerify = orig })
+func TestResolveInsecureOnlyWithExplicitBaseURL(t *testing.T) {
+	orig := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = orig })
 
 	t.Setenv("ZOT_HOME", t.TempDir())
 	t.Setenv("OPENAI_API_KEY", "test-key")
 
-	// no --base-url: must stay false even with --insecure.
-	provider.InsecureSkipVerify = false
-	_, err := Resolve(Args{Provider: "openai", InsecureTLS: true}, false)
+	resolved, err := Resolve(Args{Provider: "moonshotai", InsecureTLS: true}, false)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if provider.InsecureSkipVerify {
-		t.Fatal("InsecureSkipVerify must not be set without a custom base URL")
+	if resolved.InsecureTLS {
+		t.Fatal("InsecureTLS must not be set for built-in provider base URLs")
 	}
+	assertDefaultTransportStillSecure(t)
 
-	// --base-url + --insecure: must be true.
-	provider.InsecureSkipVerify = false
-	_, err = Resolve(Args{Provider: "openai", InsecureTLS: true, BaseURL: "https://my-llm.internal/v1"}, false)
+	resolved, err = Resolve(Args{Provider: "openai", InsecureTLS: true, BaseURL: "https://my-llm.internal/v1"}, false)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if !provider.InsecureSkipVerify {
-		t.Fatal("InsecureSkipVerify must be set with --insecure and --base-url")
+	if !resolved.InsecureTLS {
+		t.Fatal("InsecureTLS must be set with --insecure and explicit --base-url")
 	}
+	assertDefaultTransportStillSecure(t)
 }
 
-func TestResolveInsecureFromConfig(t *testing.T) {
-	orig := provider.InsecureSkipVerify
-	t.Cleanup(func() { provider.InsecureSkipVerify = orig })
+func TestResolveInsecureFromConfigRequiresExplicitBaseURL(t *testing.T) {
+	orig := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = orig })
 
 	t.Setenv("ZOT_HOME", t.TempDir())
 	t.Setenv("OPENAI_API_KEY", "test-key")
@@ -250,23 +249,32 @@ func TestResolveInsecureFromConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// no --base-url: must stay false.
-	provider.InsecureSkipVerify = false
-	_, err := Resolve(Args{Provider: "openai"}, false)
+	resolved, err := Resolve(Args{Provider: "openai"}, false)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if provider.InsecureSkipVerify {
-		t.Fatal("InsecureSkipVerify must not be set without a custom base URL")
+	if resolved.InsecureTLS {
+		t.Fatal("InsecureTLS must not be set without a custom base URL")
 	}
+	assertDefaultTransportStillSecure(t)
 
-	// --base-url: must be true.
-	provider.InsecureSkipVerify = false
-	_, err = Resolve(Args{Provider: "openai", BaseURL: "https://my-llm.internal/v1"}, false)
+	resolved, err = Resolve(Args{Provider: "openai", BaseURL: "https://my-llm.internal/v1"}, false)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if !provider.InsecureSkipVerify {
-		t.Fatal("InsecureSkipVerify must be set when config insecure=true and --base-url is provided")
+	if !resolved.InsecureTLS {
+		t.Fatal("InsecureTLS must be set when config insecure=true and --base-url is provided")
+	}
+	assertDefaultTransportStillSecure(t)
+}
+
+func assertDefaultTransportStillSecure(t *testing.T) {
+	t.Helper()
+	tr, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return
+	}
+	if tr.TLSClientConfig != nil && tr.TLSClientConfig.InsecureSkipVerify {
+		t.Fatal("http.DefaultTransport must not be made insecure")
 	}
 }

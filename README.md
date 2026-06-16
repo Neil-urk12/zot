@@ -141,6 +141,7 @@ zot --help
 | `--model <id>` | Pick the model (see `--list-models`). |
 | `--api-key <key>` | Override the API key. |
 | `--base-url <url>` | Override the provider base URL (tests, self-hosted). |
+| `--insecure` | Skip TLS certificate verification, only for the explicit `--base-url` endpoint (self-signed local/internal inference servers). Built-in providers, auth, and model discovery keep normal TLS verification. |
 | `--system-prompt <text>` | Replace the default system prompt for this run (also overrides `$ZOT_HOME/SYSTEM.md`). |
 | `--append-system-prompt <text>` | Append text to the system prompt (repeatable). |
 | `--reasoning off\|minimum\|low\|medium\|high\|maximum` | Set thinking level on supported models (default: off). |

@@ -23,6 +23,7 @@ type Resolved struct {
 	AuthMethod  string // "apikey" | "oauth" | "" (no credential yet)
 	AccountID   string // ChatGPT account id (for openai oauth), "" otherwise
 	BaseURL     string
+	InsecureTLS bool
 	CWD         string
 	Reasoning   string
 	Temperature *float32
@@ -409,6 +410,8 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 		model = fm.ID
 	}
 
+	explicitBaseURL := args.BaseURL != ""
+
 	// If the model defines a base URL (e.g. local ollama) and the
 	// user didn't pass --base-url, use the model's URL. For ollama,
 	// keep http://localhost:11434 as a fallback only after the model
@@ -420,10 +423,10 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 		args.BaseURL = "http://localhost:11434"
 	}
 
-	provider.InsecureSkipVerify = (args.InsecureTLS || cfg.Insecure) && args.BaseURL != ""
-	if provider.InsecureSkipVerify {
-		provider.ApplyInsecureTLS()
-	}
+	// Insecure TLS is intentionally scoped to explicit custom endpoints.
+	// Built-in provider base URLs, auth calls, and model discovery keep normal
+	// certificate verification even when --insecure is present.
+	insecureTLS := (args.InsecureTLS || cfg.Insecure) && explicitBaseURL
 
 	// If the model has a base URL, credentials are optional (local
 	// models like ollama don't need real API keys).
@@ -512,6 +515,7 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 		AuthMethod:       method,
 		AccountID:        accountID,
 		BaseURL:          args.BaseURL,
+		InsecureTLS:      insecureTLS,
 		CWD:              args.CWD,
 		Reasoning:        reasoning,
 		Temperature:      temperature,
@@ -639,90 +643,98 @@ func (r Resolved) NewClient() provider.Client {
 	if !r.HasCredential() {
 		panic("NewClient called without credential; check HasCredential first")
 	}
+	wrap := r.withHTTPClient
 	switch r.Provider {
 	case "ollama":
-		return provider.NewOpenAI(r.Credential, r.BaseURL)
+		return wrap(provider.NewOpenAI(r.Credential, r.BaseURL))
 	case "kimi":
 		// kimi-coding speaks anthropic-messages on api.kimi.com/coding.
 		// Subscription OAuth (refreshed) wraps the same Anthropic-shaped client.
-		inner := provider.NewKimiCodingWithHeaders(r.Credential, r.BaseURL, kimiCodeHeaders())
+		inner := wrap(provider.NewKimiCodingWithHeaders(r.Credential, r.BaseURL, kimiCodeHeaders()))
 		if r.AuthMethod == "oauth" {
 			return r.wrapWithRefresh(inner)
 		}
 		return inner
 	case "moonshotai":
-		return provider.NewMoonshot(r.Credential, r.BaseURL)
+		return wrap(provider.NewMoonshot(r.Credential, r.BaseURL))
 	case "moonshotai-cn":
-		return provider.NewMoonshotCN(r.Credential, r.BaseURL)
+		return wrap(provider.NewMoonshotCN(r.Credential, r.BaseURL))
 	case "deepseek":
-		return provider.NewDeepSeek(r.Credential, r.BaseURL)
+		return wrap(provider.NewDeepSeek(r.Credential, r.BaseURL))
 	case "openai":
-		return provider.NewOpenAI(r.Credential, r.BaseURL)
+		return wrap(provider.NewOpenAI(r.Credential, r.BaseURL))
 	case "openai-codex":
-		inner := provider.NewOpenAICodex(r.Credential, r.AccountID, r.BaseURL)
+		inner := wrap(provider.NewOpenAICodex(r.Credential, r.AccountID, r.BaseURL))
 		return r.wrapWithRefresh(inner)
 	case "openai-responses":
 		// Public OpenAI Responses API (api.openai.com/v1/responses) via
 		// API key. Separate provider from `openai` (Chat Completions) and
 		// from `openai-codex` (ChatGPT subscription OAuth).
-		return provider.NewOpenAIResponses(r.Credential, r.BaseURL)
+		return wrap(provider.NewOpenAIResponses(r.Credential, r.BaseURL))
 	case "google":
-		return provider.NewGemini(r.Credential, r.BaseURL)
+		return wrap(provider.NewGemini(r.Credential, r.BaseURL))
 	case "cerebras":
-		return provider.NewCerebras(r.Credential, r.BaseURL)
+		return wrap(provider.NewCerebras(r.Credential, r.BaseURL))
 	case "groq":
-		return provider.NewGroq(r.Credential, r.BaseURL)
+		return wrap(provider.NewGroq(r.Credential, r.BaseURL))
 	case "xai":
-		return provider.NewXAI(r.Credential, r.BaseURL)
+		return wrap(provider.NewXAI(r.Credential, r.BaseURL))
 	case "together":
-		return provider.NewTogether(r.Credential, r.BaseURL)
+		return wrap(provider.NewTogether(r.Credential, r.BaseURL))
 	case "huggingface":
-		return provider.NewHuggingFace(r.Credential, r.BaseURL)
+		return wrap(provider.NewHuggingFace(r.Credential, r.BaseURL))
 	case "openrouter":
-		return provider.NewOpenRouter(r.Credential, r.BaseURL)
+		return wrap(provider.NewOpenRouter(r.Credential, r.BaseURL))
 	case "zai":
-		return provider.NewZAI(r.Credential, r.BaseURL)
+		return wrap(provider.NewZAI(r.Credential, r.BaseURL))
 	case "xiaomi":
-		return provider.NewXiaomi(r.Credential, r.BaseURL)
+		return wrap(provider.NewXiaomi(r.Credential, r.BaseURL))
 	case "xiaomi-token-plan-ams":
-		return provider.NewXiaomiTokenPlan("ams", r.Credential, r.BaseURL)
+		return wrap(provider.NewXiaomiTokenPlan("ams", r.Credential, r.BaseURL))
 	case "xiaomi-token-plan-cn":
-		return provider.NewXiaomiTokenPlan("cn", r.Credential, r.BaseURL)
+		return wrap(provider.NewXiaomiTokenPlan("cn", r.Credential, r.BaseURL))
 	case "xiaomi-token-plan-sgp":
-		return provider.NewXiaomiTokenPlan("sgp", r.Credential, r.BaseURL)
+		return wrap(provider.NewXiaomiTokenPlan("sgp", r.Credential, r.BaseURL))
 	case "opencode":
-		return provider.NewOpenCode(r.Credential, r.BaseURL)
+		return wrap(provider.NewOpenCode(r.Credential, r.BaseURL))
 	case "opencode-go":
-		return provider.NewOpenCodeGo(r.Credential, r.BaseURL)
+		return wrap(provider.NewOpenCodeGo(r.Credential, r.BaseURL))
 	case "minimax":
-		return provider.NewMinimaxAnthropic(r.Credential, r.BaseURL)
+		return wrap(provider.NewMinimaxAnthropic(r.Credential, r.BaseURL))
 	case "minimax-cn":
-		return provider.NewMinimaxCNAnthropic(r.Credential, r.BaseURL)
+		return wrap(provider.NewMinimaxCNAnthropic(r.Credential, r.BaseURL))
 	case "fireworks":
-		return provider.NewFireworksAnthropic(r.Credential, r.BaseURL)
+		return wrap(provider.NewFireworksAnthropic(r.Credential, r.BaseURL))
 	case "vercel-ai-gateway":
-		return provider.NewVercelGatewayAnthropic(r.Credential, r.BaseURL)
+		return wrap(provider.NewVercelGatewayAnthropic(r.Credential, r.BaseURL))
 	case "mistral":
-		return provider.NewMistral(r.Credential, r.BaseURL)
+		return wrap(provider.NewMistral(r.Credential, r.BaseURL))
 	case "amazon-bedrock":
-		return provider.NewBedrock(r.Credential, r.BaseURL)
+		return wrap(provider.NewBedrock(r.Credential, r.BaseURL))
 	case "google-vertex":
-		return provider.NewGoogleVertex(r.Credential, r.BaseURL)
+		return wrap(provider.NewGoogleVertex(r.Credential, r.BaseURL))
 	case "azure-openai-responses":
-		return provider.NewAzureOpenAIResponses(r.Credential, r.BaseURL)
+		return wrap(provider.NewAzureOpenAIResponses(r.Credential, r.BaseURL))
 	case "github-copilot":
-		return provider.NewGithubCopilot(r.Credential, r.BaseURL)
+		return wrap(provider.NewGithubCopilot(r.Credential, r.BaseURL))
 	case "cloudflare-workers-ai":
-		return provider.NewCloudflareWorkersAI(r.Credential, r.BaseURL)
+		return wrap(provider.NewCloudflareWorkersAI(r.Credential, r.BaseURL))
 	case "cloudflare-ai-gateway":
-		return provider.NewCloudflareAIGateway(r.Credential, r.BaseURL)
+		return wrap(provider.NewCloudflareAIGateway(r.Credential, r.BaseURL))
 	default:
 		if r.AuthMethod == "oauth" {
-			inner := provider.NewAnthropicOAuth(r.Credential, r.BaseURL)
+			inner := wrap(provider.NewAnthropicOAuth(r.Credential, r.BaseURL))
 			return r.wrapWithRefresh(inner)
 		}
-		return provider.NewAnthropic(r.Credential, r.BaseURL)
+		return wrap(provider.NewAnthropic(r.Credential, r.BaseURL))
 	}
+}
+
+func (r Resolved) withHTTPClient(c provider.Client) provider.Client {
+	if !r.InsecureTLS {
+		return c
+	}
+	return provider.WithHTTPClient(c, provider.NewHTTPClient(true))
 }
 
 // wrapWithRefresh wraps an OAuth client so the access token is
@@ -748,12 +760,12 @@ func (r Resolved) wrapWithRefresh(inner provider.Client) provider.Client {
 	factory := func(token string) provider.Client {
 		switch provName {
 		case "openai-codex":
-			return provider.NewOpenAICodex(token, accountID, baseURL)
+			return r.withHTTPClient(provider.NewOpenAICodex(token, accountID, baseURL))
 		case "kimi":
 			// anthropic-messages on api.kimi.com/coding.
-			return provider.NewKimiCodingWithHeaders(token, baseURL, kimiCodeHeaders())
+			return r.withHTTPClient(provider.NewKimiCodingWithHeaders(token, baseURL, kimiCodeHeaders()))
 		default:
-			return provider.NewAnthropicOAuth(token, baseURL)
+			return r.withHTTPClient(provider.NewAnthropicOAuth(token, baseURL))
 		}
 	}
 
