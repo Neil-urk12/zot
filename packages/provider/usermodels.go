@@ -8,23 +8,21 @@ import (
 
 // UserModelsFile is the JSON format for user-defined models.
 // Place a models.json in $ZOT_HOME to add models that aren't in the
-// baked-in catalog or to override catalog entries.
-//
-// Example:
+// baked-in catalog or to override catalog entries. Custom providers
+// (not in the built-in set) may specify a baseUrl and api format at
+// the provider level:
 //
 //	{
 //	  "providers": {
-//	    "openai": {
+//	    "my-company": {
+//	      "baseUrl": "https://llm.mycompany.com/v1",
+//	      "api": "openai",
 //	      "models": [
 //	        {
-//	          "id": "gpt-5.5",
-//	          "name": "GPT-5.5",
-//	          "reasoning": true,
-//	          "contextWindow": 400000,
-//	          "maxTokens": 128000,
-//	          "priceInput": 2.50,
-//	          "priceOutput": 15.00,
-//	          "priceCacheRead": 0.25
+//	          "id": "company-llm-v2",
+//	          "name": "Company LLM v2",
+//	          "contextWindow": 128000,
+//	          "maxTokens": 32000
 //	        }
 //	      ]
 //	    }
@@ -36,8 +34,24 @@ type UserModelsFile struct {
 
 // UserProvider groups models under a provider key.
 type UserProvider struct {
-	Models []UserModel `json:"models"`
+	BaseURL string      `json:"baseUrl,omitempty"`
+	API     string      `json:"api,omitempty"` // "openai" (default) or "anthropic"
+	Models  []UserModel `json:"models"`
 }
+
+// CustomProviderConfig holds runtime config for a user-defined provider
+// that isn't part of the built-in catalog.
+type CustomProviderConfig struct {
+	BaseURL string
+	API     string // "openai" or "anthropic"
+}
+
+var customProviders = map[string]CustomProviderConfig{}
+
+// CustomProviders returns the set of user-defined providers loaded from
+// models.json. Keys are provider names; values carry the base URL and
+// wire-format hint.
+func CustomProviders() map[string]CustomProviderConfig { return customProviders }
 
 // UserModel is a single model entry in the user's models.json.
 type UserModel struct {
@@ -83,6 +97,8 @@ func LoadUserModelsWithWarnings(path string) ([]Model, []string) {
 	}
 
 	var out []Model
+	// Reset custom providers on each load so removed entries don't linger.
+	customProviders = map[string]CustomProviderConfig{}
 	for providerName, prov := range file.Providers {
 		if providerName == "" {
 			warnings = append(warnings, "models.json: empty provider key skipped")
@@ -101,6 +117,29 @@ func LoadUserModelsWithWarnings(path string) ([]Model, []string) {
 			normalized = "deepseek"
 		}
 
+		// Register custom providers: any provider with a baseUrl or
+		// an api format that isn't the built-in "openai"/"anthropic"
+		// alias is treated as user-defined. Also catch providers whose
+		// name doesn't match a known provider (detected later in
+		// build.go's isKnownProvider check).
+		if prov.BaseURL != "" || prov.API != "" {
+			api := prov.API
+			if api == "" {
+				api = "openai"
+			}
+			// Normalize common aliases for the wire format.
+			switch api {
+			case "openai-completions", "openai-chat", "chat", "openai":
+				api = "openai"
+			case "anthropic-messages", "messages", "anthropic":
+				api = "anthropic"
+			}
+			customProviders[normalized] = CustomProviderConfig{
+				BaseURL: prov.BaseURL,
+				API:     api,
+			}
+		}
+
 		for i, um := range prov.Models {
 			if um.ID == "" {
 				warnings = append(warnings, fmt.Sprintf("models.json: provider %q entry #%d has empty id; skipped", providerName, i))
@@ -115,6 +154,11 @@ func LoadUserModelsWithWarnings(path string) ([]Model, []string) {
 					um.MaxTokens = 0
 				}
 			}
+			// Propagate provider-level BaseURL to models without their own.
+			modelBaseURL := um.BaseURL
+			if modelBaseURL == "" {
+				modelBaseURL = prov.BaseURL
+			}
 			m := Model{
 				Provider:        normalized,
 				ID:              um.ID,
@@ -126,7 +170,7 @@ func LoadUserModelsWithWarnings(path string) ([]Model, []string) {
 				PriceOutput:     um.PriceOutput,
 				PriceCacheRead:  um.PriceCacheRead,
 				PriceCacheWrite: um.PriceCacheWrite,
-				BaseURL:         um.BaseURL,
+				BaseURL:         modelBaseURL,
 				Source:          "user",
 			}
 			if m.DisplayName == "" {
@@ -147,6 +191,12 @@ func SetUserModels(models []Model) {
 	}
 	activeMu.Lock()
 	defer activeMu.Unlock()
+
+	// Ensure the active overlay is initialized so Active() reads from
+	// it instead of falling back to the static Catalog.
+	if !activeSet {
+		activeSet = true
+	}
 
 	// Build index of current active models.
 	byKey := func(p, id string) string { return p + "/" + id }

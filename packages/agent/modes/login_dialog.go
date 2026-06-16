@@ -233,17 +233,22 @@ func (d *loginDialog) Render(th tui.Theme, width int) []string {
 }
 
 // providersForMethod returns the providers offered for a given login
-// method. API-key is the universal path so it lists every provider;
-// subscription/OAuth only lists providers that actually issue tokens
-// usable against the same API the model picker drives (Google's
-// consumer Gemini Advanced login does not, and DeepSeek has no
-// subscription product at all).
+// method. API-key is the universal path so it lists every provider
+// (including custom providers from models.json); subscription/OAuth
+// only lists providers that actually issue tokens usable against the
+// same API the model picker drives (Google's consumer Gemini Advanced
+// login does not, and DeepSeek has no subscription product at all).
 func providersForMethod(method string) []string {
 	var providers []string
 	if method == "oauth" {
 		providers = []string{"anthropic", "openai-codex", "kimi", "github-copilot"}
 	} else {
 		providers = auth.APIKeyProviders()
+		// Append custom providers from models.json so they appear
+		// in the /login picker alongside built-in providers.
+		for name := range provider.CustomProviders() {
+			providers = append(providers, name)
+		}
 	}
 	sort.Slice(providers, func(a, b int) bool {
 		return providerLabel(providers[a]) < providerLabel(providers[b])

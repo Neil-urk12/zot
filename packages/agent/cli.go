@@ -214,6 +214,16 @@ func Run(rawArgs []string, version string) error {
 	LoadCachedModels()
 	LoadUserModels()
 
+	// Register custom provider names with the auth package so they
+	// participate in /login API-key flow and provider pickers.
+	if cps := provider.CustomProviders(); len(cps) > 0 {
+		names := make([]string, 0, len(cps))
+		for name := range cps {
+			names = append(names, name)
+		}
+		auth.SetExtraAPIKeyProviders(names)
+	}
+
 	// Repair config.json so a stale (provider, model) pair from an
 	// interrupted /model switch can't strand the user with an
 	// "unknown model" error on the first turn. Runs before any UI
@@ -974,6 +984,13 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 			var out []string
 			seen := map[string]bool{}
 			for _, p := range knownProviders {
+				if _, _, err := ResolveCredential(p, ""); err == nil && !seen[p] {
+					out = append(out, p)
+					seen[p] = true
+				}
+			}
+			// Include custom providers that have credentials stored.
+			for p := range provider.CustomProviders() {
 				if _, _, err := ResolveCredential(p, ""); err == nil && !seen[p] {
 					out = append(out, p)
 					seen[p] = true
