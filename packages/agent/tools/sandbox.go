@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -56,6 +57,42 @@ func (s *Sandbox) CheckPath(path string) error {
 	return nil
 }
 
+// DisplayPath returns the path the model should see in tool results
+// and error messages. When jailed, an absolute path inside the
+// sandbox root is rewritten relative to that root ("./pkg/foo.go"),
+// which keeps absolute paths out of the context window so the model
+// is nudged toward relative paths instead of trying to escape the
+// jail (see issue #39). Paths outside root, unjailed sessions, and
+// already-relative inputs are returned unchanged.
+//
+// abs should be the resolved absolute path (resolvePath output);
+// given is the path exactly as the model supplied it, used as the
+// fallback when no better relative form is available.
+func (s *Sandbox) DisplayPath(abs, given string) string {
+	if !s.Locked() {
+		return given
+	}
+	rootAbs, err := canonical(s.Root)
+	if err != nil {
+		return given
+	}
+	target, err := canonicalOrParent(abs)
+	if err != nil {
+		return given
+	}
+	if !isUnder(rootAbs, target) {
+		return given
+	}
+	rel, err := filepath.Rel(rootAbs, target)
+	if err != nil || rel == "" || strings.HasPrefix(rel, "..") {
+		return given
+	}
+	if rel == "." {
+		return "."
+	}
+	return "./" + filepath.ToSlash(rel)
+}
+
 // CheckCommand applies a lightweight sanity check to a bash command
 // when jailed. We cannot fully sandbox a shell, but we can reject the
 // most obvious escapes so the model does not accidentally touch files
@@ -81,17 +118,88 @@ func (s *Sandbox) CheckCommand(cmd string) error {
 			return fmt.Errorf("jailed: command contains banned pattern %q (use /unjail to disable)", b)
 		}
 	}
-	// Heuristic: reject a leading `cd /` or `cd ~` that tries to move
-	// the shell out of the sandbox. Note this only catches simple cases;
-	// a determined adversary can still escape. This is a speed bump for
-	// the model, not a security boundary.
+	// Heuristic: reject a leading `cd` that tries to move the shell out
+	// of the sandbox. We only reject when the target actually resolves
+	// outside root; a `cd` into a subdirectory of root (even spelled as
+	// an absolute path) is allowed, because the model frequently does
+	// `cd /abs/path/inside/root && build` and blanket-rejecting that
+	// wastes turns and nudges the model toward trying to break out.
+	// Note this only catches simple cases; a determined adversary can
+	// still escape. This is a speed bump for the model, not a security
+	// boundary.
 	first := strings.TrimSpace(strings.SplitN(cmd, ";", 2)[0])
 	first = strings.TrimSpace(strings.SplitN(first, "&&", 2)[0])
-	if strings.HasPrefix(first, "cd /") || strings.HasPrefix(first, "cd ~") ||
-		strings.HasPrefix(first, "cd $HOME") || strings.HasPrefix(first, "cd ..") {
+	if target, ok := cdTarget(first); ok {
+		if err := s.checkCDTarget(target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// cdTarget extracts the destination of a leading `cd <dir>` command.
+// Returns ok=false when seg is not a `cd` invocation or has no explicit
+// target (bare `cd` / `cd -` go home / previous dir; we leave those to
+// the path checks on subsequent tool calls rather than guessing).
+func cdTarget(seg string) (string, bool) {
+	seg = strings.TrimSpace(seg)
+	if seg != "cd" && !strings.HasPrefix(seg, "cd ") {
+		return "", false
+	}
+	arg := strings.TrimSpace(strings.TrimPrefix(seg, "cd"))
+	if arg == "" || arg == "-" {
+		return "", false
+	}
+	// Drop surrounding quotes if the model wrapped the path.
+	if len(arg) >= 2 {
+		if (arg[0] == '"' && arg[len(arg)-1] == '"') || (arg[0] == '\'' && arg[len(arg)-1] == '\'') {
+			arg = arg[1 : len(arg)-1]
+		}
+	}
+	return arg, true
+}
+
+// checkCDTarget resolves a `cd` destination (relative to the sandbox
+// root, with ~ and $HOME expansion) and rejects it only when it lands
+// outside the root.
+func (s *Sandbox) checkCDTarget(dir string) error {
+	rootAbs, err := canonical(s.Root)
+	if err != nil {
+		return fmt.Errorf("sandbox root: %w", err)
+	}
+	expanded := expandHome(dir)
+	if !filepath.IsAbs(expanded) {
+		// Relative targets (including `..`) resolve against the sandbox
+		// root, which is the bash tool's working directory when jailed.
+		expanded = filepath.Join(s.Root, expanded)
+	}
+	target, err := canonicalOrParent(expanded)
+	if err != nil {
+		return fmt.Errorf("sandbox path: %w", err)
+	}
+	if !isUnder(rootAbs, target) {
 		return fmt.Errorf("jailed: cd outside sandbox root is not allowed (use /unjail to disable)")
 	}
 	return nil
+}
+
+// expandHome replaces a leading ~, ~/, or $HOME with the user's home
+// directory so cd-target resolution matches what the shell would do.
+func expandHome(p string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	switch {
+	case p == "~" || p == "$HOME":
+		return home
+	case strings.HasPrefix(p, "~/"):
+		return filepath.Join(home, p[2:])
+	case strings.HasPrefix(p, "$HOME/"):
+		return filepath.Join(home, p[len("$HOME/"):])
+	default:
+		return p
+	}
 }
 
 // canonical returns an absolute, symlink-resolved path. Errors on missing files.

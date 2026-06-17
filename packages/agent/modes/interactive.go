@@ -533,6 +533,13 @@ func (i *Interactive) Run(ctx context.Context) error {
 	// chat as normal terminal flow/scrollback and redraws only the live
 	// input/status block on normal typing.
 	_, _ = term.Write([]byte(tui.SeqBracketedPasteOn + tui.SeqEnhancedKeyboardOn + tui.SeqResetScrollRegion + tui.SeqDeleteKittyImages + tui.SeqClearScreenNoHome + tui.SeqClearScrollback + tui.MoveTo(1, 1)))
+	// Tell the terminal our working directory (OSC 7) so "new tab /
+	// split here" opens in the launch cwd instead of inheriting a stale
+	// directory from an extension subprocess (see issue #38). Harmless
+	// on terminals that ignore it.
+	if seq := tui.ReportCWD(i.cfg.CWD); seq != "" {
+		_, _ = term.Write([]byte(seq))
+	}
 	defer term.Write([]byte(tui.SeqResetScrollRegion + tui.SeqDeleteKittyImages + tui.SeqEnhancedKeyboardOff + tui.SeqBracketedPasteOff + tui.SeqShowCursor))
 
 	// Streaming pacer: drains buffered text deltas at a steady rate
@@ -2463,6 +2470,13 @@ func (i *Interactive) ApplyChangedCWD(ag *core.Agent, provider, model, cwd strin
 	i.mu.Lock()
 	i.agent = ag
 	i.cfg.CWD = cwd
+	// Re-report the working directory to the terminal so "new tab here"
+	// tracks the /cd change (OSC 7, see issue #38).
+	if i.cfg.Terminal != nil {
+		if seq := tui.ReportCWD(cwd); seq != "" {
+			_, _ = i.cfg.Terminal.Write([]byte(seq))
+		}
+	}
 	i.cfg.Provider = provider
 	i.cfg.Model = model
 	i.toolCalls = map[string]*tui.ToolCallView{}
