@@ -788,6 +788,8 @@ func (v *View) renderToolCall(tc ToolCallView, width int) []string {
 //   - edit:  shows the partial `newText` of the edit currently being
 //     streamed, prefixed with a "editing foo.ts (edit 2)" header so
 //     the user can see which of a multi-edit batch is in progress.
+//   - bash:  shows the full command as soon as the JSON args are known,
+//     before stdout/stderr has arrived, so long-running commands are legible.
 //
 // Anything else returns nil and only the tool-call header shows.
 func (v *View) renderLiveToolBody(tc ToolCallView, width int) []string {
@@ -809,8 +811,41 @@ func (v *View) renderLiveToolBody(tc ToolCallView, width int) []string {
 		body := []string{"    " + v.Theme.FG256(v.Theme.Muted, hint), ""}
 		body = append(body, v.renderRawFile(partial, tc.LivePath, 1)...)
 		return v.wrapLiveBody(body, width)
+	case "bash", "Bash":
+		command, ok, _ := ExtractPartialStringField(tc.RawJSONBuf, "command")
+		if !ok || strings.TrimSpace(command) == "" {
+			return nil
+		}
+		return v.wrapLiveBody(v.renderLiveBashCommand(command, width), width)
 	}
 	return nil
+}
+
+func (v *View) renderLiveBashCommand(command string, width int) []string {
+	inner := toolBoxBodyRenderWidth(width)
+	prompt := v.Theme.FG256(v.Theme.Muted, "$ ")
+	var out []string
+	for i, line := range strings.Split(command, "\n") {
+		firstPrefix := "    "
+		if i == 0 {
+			firstPrefix += prompt
+		} else {
+			firstPrefix += "  "
+		}
+		contPrefix := "      "
+		wrapWidth := inner - visibleWidth(firstPrefix)
+		if wrapWidth < 10 {
+			wrapWidth = 10
+		}
+		for j, wrapped := range wrapANSILine(v.Theme.FG256(v.Theme.ToolOut, line), wrapWidth) {
+			prefix := firstPrefix
+			if j > 0 {
+				prefix = contPrefix
+			}
+			out = append(out, prefix+wrapped)
+		}
+	}
+	return out
 }
 
 // wrapLiveBody returns the streaming body content as a list of

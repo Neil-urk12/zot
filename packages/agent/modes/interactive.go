@@ -4714,12 +4714,16 @@ func (i *Interactive) handleEvent(ev core.AgentEvent) {
 		// (non-streaming providers or legacy paths).
 		if tc, ok := i.toolCalls[e.ID]; ok {
 			tc.Args = tui.ShortArgs(e.Name, e.Args)
+			if tc.RawJSONBuf == "" {
+				tc.RawJSONBuf = string(e.Args)
+			}
 			tc.Streaming = false
 		} else {
 			i.toolCalls[e.ID] = &tui.ToolCallView{
-				ID:   e.ID,
-				Name: e.Name,
-				Args: tui.ShortArgs(e.Name, e.Args),
+				ID:         e.ID,
+				Name:       e.Name,
+				Args:       tui.ShortArgs(e.Name, e.Args),
+				RawJSONBuf: string(e.Args),
 			}
 			i.toolOrder = append(i.toolOrder, e.ID)
 			i.gateToolLocked(e.ID)
