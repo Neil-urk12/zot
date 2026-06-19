@@ -283,7 +283,6 @@ type Interactive struct {
 	// streamed + still pending) at the moment the tool starts, and
 	// hold the block back until the pacer reaches it.
 	toolGate         map[string]int
-	liveToolRowsMax  int
 	statusErr        string
 	statusOK         string
 	liveBlock        []string // live streaming/tool progress rendered outside scrollback
@@ -306,6 +305,7 @@ type Interactive struct {
 	// and off the top.
 	prevChatLen     int
 	prevChatCols    int
+	prevChatRows    int
 	prevOverlayOpen bool
 
 	// chatCache stores the built transcript/status-note rows for idle
@@ -856,10 +856,6 @@ func (i *Interactive) buildChatLocked(cols int) []string {
 	// the final assistant text — which looks like the summary came
 	// "before" the tools.
 	i.view.ToolCalls = i.view.ToolCalls[:0]
-	if !i.busy {
-		i.liveToolRowsMax = 0
-	}
-	i.view.LiveToolMinRows = i.liveToolRowsMax
 	if i.busy {
 		for _, id := range i.toolOrder {
 			// Deterministic ordering: a tool block stays hidden until
@@ -883,9 +879,6 @@ func (i *Interactive) buildChatLocked(cols int) []string {
 	// whole bottom band shrinking and shifting chat lines around.
 	i.liveBlock = nil
 	chat := i.view.Build(cols)
-	if i.view.LastLiveToolRows > i.liveToolRowsMax {
-		i.liveToolRowsMax = i.view.LastLiveToolRows
-	}
 
 	// Welcome banner: shown at the top of the chat area when there is
 	// no transcript yet. Disappears after the first message is sent.
@@ -995,12 +988,41 @@ func (i *Interactive) scrollBy(delta int) {
 	i.invalidate()
 }
 
+// anchorScrollOffset keeps the user's reading position pinned when the
+// chat buffer grows/shrinks or the viewport height changes between two
+// redraws while they're scrolled up.
+//
+// scrollOffset is measured from the bottom of the chat buffer, so the
+// top visible row is start = chatLen - scrollOffset - chatRows. To hold
+// `start` constant we adjust the offset by the buffer-length delta minus
+// the viewport-height delta. The result is clamped to [0, newLen] so a
+// shrinking buffer can't push it negative.
+func anchorScrollOffset(offset, prevLen, newLen, prevRows, newRows int) int {
+	adj := (newLen - prevLen) - (newRows - prevRows)
+	offset += adj
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > newLen {
+		offset = newLen
+	}
+	return offset
+}
+
 // scrollToBottom pins the view to the latest content.
 func (i *Interactive) scrollToBottom() {
 	i.mu.Lock()
 	i.scrollOffset = 0
 	i.parkedTurn = 0
 	i.parkedTotal = 0
+	// Reset the auto-follow baseline. scrollToBottom is the resume /
+	// session-swap snap point, where the chat buffer changes length
+	// wholesale. Without zeroing these, the next render's follow guard
+	// compares the fresh transcript's length against a stale baseline
+	// and nudges scrollOffset, which reads as a viewport jump right
+	// after resume. See commit 43da5e5 for the same fix on new turns.
+	i.prevChatLen = 0
+	i.prevChatCols = 0
 	if i.rend != nil {
 		i.rend.Invalidate()
 	}
@@ -1241,16 +1263,23 @@ func (i *Interactive) redraw() {
 	// corresponds to appended content) and when scrollOffset is 0
 	// (the user is following the tail and wants new content to push
 	// the view down as usual).
+	//
+	// The window the user sees starts at row
+	//   start = len(chat) - scrollOffset - chatRows
+	// so to keep `start` fixed across a redraw we must offset by both
+	// the buffer growth (len delta) AND the viewport-height change
+	// (chatRows delta, e.g. the status band or sliding-in queue
+	// appearing during a turn). Compensating only for the len delta
+	// let a shrinking chatRows pull the window toward the tail, which
+	// read as the viewport jumping to the bottom whenever the agent
+	// streamed text or a tool call grew the bottom band.
 	if i.scrollOffset > 0 && i.prevChatCols == cols && i.prevChatLen > 0 {
-		if delta := len(chat) - i.prevChatLen; delta != 0 {
-			i.scrollOffset += delta
-			if i.scrollOffset < 0 {
-				i.scrollOffset = 0
-			}
-		}
+		i.scrollOffset = anchorScrollOffset(i.scrollOffset,
+			i.prevChatLen, len(chat), i.prevChatRows, chatRows)
 	}
 	i.prevChatLen = len(chat)
 	i.prevChatCols = cols
+	i.prevChatRows = chatRows
 
 	// Apply scroll offset to the chat slice.
 	maxOffset := len(chat) - chatRows
@@ -1265,6 +1294,7 @@ func (i *Interactive) redraw() {
 	// rebuild immediately so the same redraw shows the freshly-revealed
 	// rows; otherwise the user would have to scroll again to see them.
 	if i.scrollOffset >= maxOffset && i.view.TailLimit > 0 && i.view.TailLimit < len(i.view.Messages) {
+		prevLen := len(chat)
 		i.view.TailLimit += resumeTailExpandStep
 		if i.view.TailLimit >= len(i.view.Messages) {
 			i.view.TailLimit = 0 // unbounded
@@ -1274,6 +1304,19 @@ func (i *Interactive) redraw() {
 		for len(chat) > 0 && strings.TrimSpace(chat[len(chat)-1]) == "" {
 			chat = chat[:len(chat)-1]
 		}
+		// Newly-revealed rows are older messages prepended at the top.
+		// scrollOffset counts rows from the bottom, so to keep the
+		// viewport visually anchored on the same content the user was
+		// looking at we shift it up by the number of rows added. Keep
+		// the auto-follow baseline (prevChatLen) in sync with the
+		// post-expansion length too, so the next render's follow guard
+		// doesn't see this growth as a synthetic delta and yank the
+		// viewport again.
+		if grew := len(chat) - prevLen; grew > 0 {
+			i.scrollOffset += grew
+		}
+		i.prevChatLen = len(chat)
+		i.prevChatCols = cols
 		maxOffset = len(chat) - chatRows
 		if maxOffset < 0 {
 			maxOffset = 0
@@ -3886,6 +3929,11 @@ func (i *Interactive) applySessionSelection(path string) {
 		i.parkedTurn = 0
 		i.parkedTotal = 0
 		i.scrollOffset = 0
+		// Fresh transcript swapped in: drop the auto-follow baseline so
+		// the next render's follow guard doesn't see the wholesale
+		// length change as a delta and jump the viewport.
+		i.prevChatLen = 0
+		i.prevChatCols = 0
 		i.extNotes = nil
 		i.view.InvalidateRenderCache()
 		if i.agent != nil {
@@ -4397,10 +4445,20 @@ func (i *Interactive) startTurnWithImages(parent context.Context, prompt string,
 	i.toolCalls = map[string]*tui.ToolCallView{}
 	i.toolOrder = nil
 	i.toolGate = map[string]int{}
-	i.liveToolRowsMax = 0
 	i.shellBlock = nil // sending a prompt clears any parked shell-escape log
 	i.extNotes = nil   // ext notes are one-shot; a new prompt clears them
 	i.scrollOffset = 0 // jump back to the bottom on new turn
+	// Lift the resume tail cap once the user starts interacting. The
+	// cap is purely a first-paint optimization (don't markdown the
+	// whole history before showing anything). Keeping it active during
+	// a turn makes the rendered chat a sliding window: appended
+	// messages push older ones off the TOP of the buffer, which the
+	// renderer must treat as a change above the viewport and repaint
+	// fully, snapping the terminal's native scrollback to the bottom on
+	// every streamed chunk. A fresh session has no cap (append-only),
+	// which is why the jump only shows up in resumed sessions. Dropping
+	// the cap here makes resumed turns append-only too.
+	i.view.TailLimit = 0
 	// Reset the auto-follow baseline so the very next render at
 	// interactive.go:1053 doesn't see a synthetic shrink between
 	// "last frame had the previous turn's tool overlay" and
@@ -4666,7 +4724,6 @@ func (i *Interactive) handleEvent(ev core.AgentEvent) {
 		i.toolCalls = map[string]*tui.ToolCallView{}
 		i.toolOrder = nil
 		i.toolGate = map[string]int{}
-		i.liveToolRowsMax = 0
 	case core.EvTextDelta:
 		// Buffer into streamPending; the paintPace ticker drains
 		// it into i.streaming a few runes at a time for a smooth
