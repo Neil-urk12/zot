@@ -122,15 +122,15 @@ type View struct {
 	Streaming       string // current assistant text delta
 	StreamingActive bool
 	ToolCalls       []ToolCallView // tool calls in flight or completed
-	// LiveToolMinRows reserves vertical space for live tool overlays.
-	// Interactive mode feeds this with the max rows observed in the
-	// current turn so a streaming/editing tool never makes the lower
-	// status/editor area jump upward when its preview shrinks or is
-	// temporarily replaced by another phase.
-	LiveToolMinRows  int
-	LastLiveToolRows int
-	StatusLine       string
-	Err              string
+	StatusLine      string
+	Err             string
+
+	// liveBodyHigh tracks the tallest live-preview body height seen
+	// per tool-call id, so a streaming edit/write/bash box never
+	// shrinks mid-stream. Keyed by ToolCallView.ID. Entries are only
+	// consulted while a call has no Result; interactive mode prunes
+	// the map when a turn ends.
+	liveBodyHigh map[string]int
 
 	// ExpandAll forces every long tool result to render in full.
 	// Toggled from the tui by ctrl+o. When false, results longer than
@@ -257,8 +257,17 @@ func (v *View) BuildLive(width int) []string {
 			}
 		}
 	}
-	liveTools := v.renderLiveToolCalls(width, finalised, len(out) > 0)
-	out = append(out, liveTools...)
+	insertedToolGap := false
+	for _, tc := range v.ToolCalls {
+		if finalised[tc.ID] {
+			continue
+		}
+		if !insertedToolGap && len(out) > 0 {
+			out = append(out, "")
+		}
+		insertedToolGap = true
+		out = append(out, v.renderToolCall(tc, width)...)
+	}
 	if v.Err != "" {
 		out = append(out, v.renderErr(width)...)
 		// out = append(out, "")
@@ -301,6 +310,24 @@ func (v *View) BuildWithAnchors(width int) ([]string, []MessageAnchor) {
 	v.refreshToolPaths()
 	if v.renderCache == nil {
 		v.renderCache = make(map[msgCacheKey][]string)
+	}
+	if v.liveBodyHigh == nil {
+		v.liveBodyHigh = make(map[string]int)
+	}
+	// Drop high-water entries for calls that are gone or finalised so
+	// the reservation never leaks into a later, shorter tool box.
+	if len(v.liveBodyHigh) > 0 {
+		active := make(map[string]bool, len(v.ToolCalls))
+		for _, tc := range v.ToolCalls {
+			if tc.Result == "" {
+				active[tc.ID] = true
+			}
+		}
+		for id := range v.liveBodyHigh {
+			if !active[id] {
+				delete(v.liveBodyHigh, id)
+			}
+		}
 	}
 
 	// Pre-render every message (hits the cache for unchanged ones) so
@@ -404,9 +431,11 @@ func (v *View) BuildWithAnchors(width int) ([]string, []MessageAnchor) {
 			}
 		}
 	}
-	liveTools := v.renderLiveToolCalls(width, finalised, false)
-	out = append(out, liveTools...)
-	if len(liveTools) > 0 {
+	for _, tc := range v.ToolCalls {
+		if finalised[tc.ID] {
+			continue
+		}
+		out = append(out, v.renderToolCall(tc, width)...)
 		out = append(out, "")
 	}
 	if v.Err != "" {
@@ -705,70 +734,6 @@ func (v *View) renderMessage(m provider.Message, width int, turnOpen bool) []str
 	return lines
 }
 
-func (v *View) renderLiveToolCalls(width int, finalised map[string]bool, leadingGap bool) []string {
-	var out []string
-	insertedToolGap := false
-	for _, tc := range v.ToolCalls {
-		if finalised[tc.ID] {
-			continue
-		}
-		if !insertedToolGap && leadingGap {
-			out = append(out, "")
-		}
-		insertedToolGap = true
-		out = append(out, v.renderToolCall(tc, width)...)
-	}
-	v.LastLiveToolRows = len(out)
-	minRows := v.LiveToolMinRows
-	if minRows < v.LastLiveToolRows {
-		minRows = v.LastLiveToolRows
-	}
-	// Pad up to the reserved height so a live tool overlay never
-	// shrinks within a turn (which would yank the editor/status band
-	// upward and then push it back down on the next phase). The pad
-	// rows are injected *inside* the last open tool box, just above its
-	// bottom edge, so they are real box-side rows: trailing-blank
-	// trimming in the caller can't strip them and the box keeps a
-	// stable footprint.
-	if need := minRows - len(out); need > 0 {
-		out = v.padLiveToolBox(out, need, width)
-	}
-	return out
-}
-
-// padLiveToolBox inserts `need` blank box-side rows just before the
-// final bottom-edge row of out. If the last row isn't a box bottom
-// edge (no open box to grow), it falls back to appending plain blank
-// rows. Returns the grown slice.
-func (v *View) padLiveToolBox(out []string, need, width int) []string {
-	bottomIdx := -1
-	for i := len(out) - 1; i >= 0; i-- {
-		if strings.Contains(stripANSI(out[i]), "\u2514") { // "\u2514" = box bottom-left corner
-			bottomIdx = i
-			break
-		}
-		if strings.TrimSpace(stripANSI(out[i])) != "" {
-			break
-		}
-	}
-	if bottomIdx < 0 {
-		for need > 0 {
-			out = append(out, "")
-			need--
-		}
-		return out
-	}
-	pad := make([]string, 0, need)
-	for i := 0; i < need; i++ {
-		pad = append(pad, toolBoxSide(v.Theme, "", width))
-	}
-	grown := make([]string, 0, len(out)+need)
-	grown = append(grown, out[:bottomIdx]...)
-	grown = append(grown, pad...)
-	grown = append(grown, out[bottomIdx:]...)
-	return grown
-}
-
 func (v *View) renderToolCall(tc ToolCallView, width int) []string {
 	var lines []string
 
@@ -796,6 +761,22 @@ func (v *View) renderToolCall(tc ToolCallView, width int) []string {
 	// EvToolUseEnd and EvToolResult.
 	if tc.Result == "" {
 		if body := v.renderLiveToolBody(tc, width); len(body) > 0 {
+			// Pad the live preview up to the call's high-water height so
+			// it never shrinks mid-stream (e.g. between edit 1 and the
+			// start of edit 2). Padding sits inside the box as real
+			// box-side rows so the surrounding layout stays put. The
+			// high-water mark is per call id and is dropped the moment a
+			// Result lands (this branch only runs while Result == "").
+			high := len(body)
+			if v.liveBodyHigh != nil {
+				if prev := v.liveBodyHigh[tc.ID]; prev > high {
+					high = prev
+				}
+				v.liveBodyHigh[tc.ID] = high
+			}
+			for len(body) < high {
+				body = append(body, toolBoxSide(v.Theme, "", width))
+			}
 			lines = append(lines, toolBoxTop(v.Theme, label, width))
 			lines = append(lines, toolBoxSide(v.Theme, "", width))
 			lines = append(lines, body...)

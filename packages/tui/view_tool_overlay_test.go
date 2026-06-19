@@ -51,40 +51,64 @@ func TestLiveToolOverlayShowsFullBashCommandBeforeResult(t *testing.T) {
 	}
 }
 
-func TestLiveToolOverlayHeightDoesNotShrink(t *testing.T) {
+func TestLiveToolOverlayHeightDoesNotShrinkMidStream(t *testing.T) {
+	v := View{Theme: Dark}
 	tall := json.RawMessage(`{"command":"line1\nline2\nline3\nline4\nline5"}`)
-	v := View{
-		Theme: Dark,
-		ToolCalls: []ToolCallView{
-			{ID: "toolu_1", Name: "bash", Args: ShortArgs("bash", tall), RawJSONBuf: string(tall)},
-		},
+	v.ToolCalls = []ToolCallView{
+		{ID: "toolu_1", Name: "bash", Args: ShortArgs("bash", tall), RawJSONBuf: string(tall)},
 	}
-	tallRows := len(v.BuildLive(80))
+	tallRows := len(v.Build(80))
 	if tallRows == 0 {
 		t.Fatal("expected rows for the tall command")
 	}
 
-	// Reserve the observed height, then switch to a shorter command
-	// (e.g. the next phase of the same turn). The overlay must stay at
-	// least as tall as before so the editor/status area never jumps up.
-	v.LiveToolMinRows = tallRows
+	// Same call id, but the streamed command shrinks (a transient
+	// mid-stream state). The box must keep its high-water height so the
+	// editor/status band below doesn't bounce.
+	short := json.RawMessage(`{"command":"echo hi"}`)
+	v.ToolCalls = []ToolCallView{
+		{ID: "toolu_1", Name: "bash", Args: ShortArgs("bash", short), RawJSONBuf: string(short)},
+	}
+	if got := len(v.Build(80)); got < tallRows {
+		t.Fatalf("live box shrank mid-stream from %d to %d rows", tallRows, got)
+	}
+}
+
+func TestLiveToolReservationDoesNotLeakToNextCall(t *testing.T) {
+	v := View{Theme: Dark}
+	tall := json.RawMessage(`{"command":"line1\nline2\nline3\nline4\nline5"}`)
+	v.ToolCalls = []ToolCallView{
+		{ID: "toolu_1", Name: "bash", Args: ShortArgs("bash", tall), RawJSONBuf: string(tall)},
+	}
+	tallRows := len(v.Build(80))
+
+	// A *different* tool call that is short must NOT inherit the tall
+	// call's reservation; it renders at its own natural height. (This
+	// is the regression that produced a giant empty box.)
 	short := json.RawMessage(`{"command":"echo hi"}`)
 	v.ToolCalls = []ToolCallView{
 		{ID: "toolu_2", Name: "bash", Args: ShortArgs("bash", short), RawJSONBuf: string(short)},
 	}
-	shortBuild := v.BuildLive(80)
-	if got := len(shortBuild); got < tallRows {
-		t.Fatalf("live overlay shrank from %d to %d rows", tallRows, got)
+	if got := len(v.Build(80)); got >= tallRows {
+		t.Fatalf("short call inherited prior call's height: %d rows (tall was %d)", got, tallRows)
 	}
-	// The interactive caller strips trailing blank rows; the
-	// reservation must survive that trim, so the pad rows have to be
-	// non-blank box rows rather than trailing blanks.
-	trimmed := shortBuild
-	for len(trimmed) > 0 && strings.TrimSpace(stripANSI(trimmed[len(trimmed)-1])) == "" {
-		trimmed = trimmed[:len(trimmed)-1]
+}
+
+func TestLiveToolReservationDropsOnResult(t *testing.T) {
+	v := View{Theme: Dark}
+	tall := json.RawMessage(`{"command":"line1\nline2\nline3\nline4\nline5"}`)
+	v.ToolCalls = []ToolCallView{
+		{ID: "toolu_1", Name: "bash", Args: ShortArgs("bash", tall), RawJSONBuf: string(tall)},
 	}
-	if len(trimmed) < tallRows {
-		t.Fatalf("reservation lost to trailing-blank trim: %d rows after trim, want >= %d", len(trimmed), tallRows)
+	tallRows := len(v.Build(80))
+
+	// Same id, now finalised with a tiny error result. The box must
+	// collapse to the natural result height instead of staying padded.
+	v.ToolCalls = []ToolCallView{
+		{ID: "toolu_1", Name: "bash", Args: ShortArgs("bash", tall), RawJSONBuf: string(tall), Done: true, Error: true, Result: "boom"},
+	}
+	if got := len(v.Build(80)); got >= tallRows {
+		t.Fatalf("finalised box kept live reservation: %d rows (live was %d)", got, tallRows)
 	}
 }
 
