@@ -631,9 +631,7 @@ func (v *View) renderMessage(m provider.Message, width int, turnOpen bool) []str
 		}
 		row := func(content string) string {
 			inner := strings.Repeat(" ", leftGutter) + content
-			padded := v.Theme.UserBubble(inner, width-2)
-			bar := v.Theme.BG(v.Theme.UserBubbleBG, v.Theme.FG256(v.Theme.Accent, "▌ "))
-			return bar + padded
+			return v.Theme.UserBubbleRow(inner, width)
 		}
 		var bubble []string
 		for _, c := range m.Content {
