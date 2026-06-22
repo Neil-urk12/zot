@@ -23,6 +23,20 @@ func TestReaderParsesCSIUCtrlC(t *testing.T) {
 	}
 }
 
+func TestReaderParsesRawCtrlVAsClipboardPaste(t *testing.T) {
+	k := readKey(t, "\x16")
+	if k.Kind != KeyPasteClipboard || !k.Ctrl {
+		t.Fatalf("Read kind=%v ctrl=%v, want ctrl+v clipboard paste", k.Kind, k.Ctrl)
+	}
+}
+
+func TestReaderParsesCSIUCtrlVAsClipboardPaste(t *testing.T) {
+	k := readKey(t, "\x1b[118;5u")
+	if k.Kind != KeyPasteClipboard || !k.Ctrl {
+		t.Fatalf("Read kind=%v ctrl=%v, want enhanced ctrl+v clipboard paste", k.Kind, k.Ctrl)
+	}
+}
+
 func TestReaderParsesModifyOtherKeysCtrlC(t *testing.T) {
 	k := readKey(t, "\x1b[27;5;99~")
 	if k.Kind != KeyCtrlC || !k.Ctrl {

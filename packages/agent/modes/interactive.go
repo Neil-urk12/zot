@@ -424,6 +424,8 @@ type Interactive struct {
 	// them (or when the dialog is dismissed via esc).
 	pendingRescuePrompt string
 	pendingRescueImages []provider.ImageBlock
+
+	clipboardImages []clipboardImageAttachment
 }
 
 // welcomeVersionDuration is how long the welcome banner shows the
@@ -1952,6 +1954,7 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		hadInput := !i.ed.IsEmpty() || len(i.queued) > 0 || pending > 0
 		if hadInput {
 			i.ed.Clear()
+			i.clipboardImages = nil
 			i.suggest.Reset()
 			if ag != nil {
 				ag.DrainQueuedMessages()
@@ -2020,6 +2023,9 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 	case tui.KeyCtrlL:
 		i.rend.Clear()
 		i.invalidate()
+		return false
+	case tui.KeyPasteClipboard:
+		i.pasteClipboard()
 		return false
 	case tui.KeyCtrlO:
 		// Toggle expansion of collapsed tool results. Affects every tool
@@ -2215,6 +2221,9 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		i.inputHistoryIndex = -1
 	}
 
+	if k.Kind == tui.KeyEsc {
+		i.clipboardImages = nil
+	}
 	if submit := i.ed.HandleKey(k); submit {
 		// SubmitValue() expands any [pasted text #N +L lines]
 		// placeholders back into their bodies; the raw Value()
@@ -2222,9 +2231,11 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		text := strings.TrimRight(i.ed.SubmitValue(), "\n")
 		// Expand [file:name] and [dir:name/] chips to full paths.
 		text = expandFileChips(text, i.cfg.CWD)
-		if text == "" {
+		text, images := preparePromptWithClipboardImages(text, i.clipboardImages)
+		if text == "" && len(images) == 0 {
 			return false
 		}
+		i.clipboardImages = nil
 		i.ed.Clear()
 		i.inputHistoryIndex = -1
 		i.suggest.Reset()
@@ -2291,6 +2302,13 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		ag := i.agent
 		i.mu.Unlock()
 		if busy {
+			if len(images) > 0 {
+				i.mu.Lock()
+				i.statusErr = "can't queue clipboard images while a turn is running; wait for the current turn to finish"
+				i.mu.Unlock()
+				i.invalidate()
+				return false
+			}
 			if ag != nil {
 				ag.QueueMessage(text)
 			} else {
@@ -2301,9 +2319,37 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 			i.invalidate()
 			return false
 		}
-		i.startTurn(ctx, text)
+		i.startTurnWithImages(ctx, text, images)
 	}
 	return false
+}
+
+func (i *Interactive) pasteClipboard() {
+	_, data, ok, err := tui.ReadClipboardImagePNG()
+	if err != nil {
+		i.mu.Lock()
+		i.statusErr = "clipboard paste failed: " + err.Error()
+		i.statusOK = ""
+		i.mu.Unlock()
+		return
+	}
+	if ok {
+		i.mu.Lock()
+		marker := fmt.Sprintf("[clipboard image #%d]", len(i.clipboardImages)+1)
+		i.clipboardImages = append(i.clipboardImages, clipboardImageAttachment{
+			Marker: marker,
+			Image:  provider.ImageBlock{MimeType: "image/png", Data: data},
+		})
+		i.ed.Insert(marker + " ")
+		i.statusOK = ""
+		i.statusErr = ""
+		i.mu.Unlock()
+		return
+	}
+	i.mu.Lock()
+	i.statusErr = "clipboard does not contain an image"
+	i.statusOK = ""
+	i.mu.Unlock()
 }
 
 func (i *Interactive) handleInputHistoryKey(k tui.Key) bool {
