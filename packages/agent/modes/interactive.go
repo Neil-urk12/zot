@@ -1259,10 +1259,24 @@ func (i *Interactive) redraw() {
 	if !i.swarmDialog.Active() {
 		bottom = append(bottom, suggest...)
 		bottom = append(bottom, queue...)
-		bottom = append(bottom, "")
-		bottom = append(bottom, statusLines...)
-		bottom = append(bottom, "")
+		// Muted rules above and below the editor frame it as the
+		// interactive zone — chat history above, status footer
+		// (cwd / provider / model etc.) below. Replaces the
+		// previous blank breathing rows; still one row tall per
+		// side, so the cursor offset to the editor remains
+		// `+ 1 + curR` (the upper rule).
+		appendSep := func() {
+			if cols > 0 {
+				sep := strings.Repeat("─", cols)
+				bottom = append(bottom, i.cfg.Theme.FG256(i.cfg.Theme.Muted, sep))
+			} else {
+				bottom = append(bottom, "")
+			}
+		}
+		appendSep()
 		bottom = append(bottom, edLines...)
+		appendSep()
+		bottom = append(bottom, statusLines...)
 	}
 
 	_, rows := i.cfg.Terminal.Size()
@@ -1419,12 +1433,12 @@ func (i *Interactive) redraw() {
 	if len(dialog) > 0 {
 		dialogLead = 1
 	}
-	// +2 accounts for the blank row above statusLines (so the
-	// status block has air above it) and the blank row between
-	// statusLines and edLines (input breathing room). Without
-	// these the rendered cursor would land on a blank instead of
-	// inside the editor row.
-	cursorRow := dialogLead + len(dialog) + len(suggest) + len(queue) + 1 + len(statusLines) + 1 + curR
+	// +1 accounts for the blank row above the editor (breathing
+	// room between the chat history and the input). The status
+	// footer now sits below the editor, so it no longer factors
+	// into the cursor offset — the cursor lands directly on the
+	// editor row.
+	cursorRow := dialogLead + len(dialog) + len(suggest) + len(queue) + 1 + curR
 	cursorCol := curC
 	if i.btwDialog.Active() {
 		if r, c := i.btwDialog.CursorPos(cols); r >= 0 {
