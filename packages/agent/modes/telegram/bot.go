@@ -2,18 +2,17 @@ package telegram
 
 import (
 	"context"
-	"fmt"
 	"strings"
-	"sync"
-	"time"
 
+	"github.com/patriceckhart/zot/packages/agent/modes/bot"
 	"github.com/patriceckhart/zot/packages/core"
-	"github.com/patriceckhart/zot/packages/provider"
 )
 
-// Bot owns the Telegram polling loop and dispatches inbound DMs to
-// the agent. It is a long-running goroutine; Run blocks until ctx
-// cancels.
+// Bot is a thin wrapper around bot.Runner + Adapter.  It exists to
+// keep the exported API stable for botcmd.go.
+//
+// Deprecated: Use telegram.NewAdapter + bot.NewRunner directly.
+// Bot is kept for backward compatibility but is no longer used internally.
 type Bot struct {
 	Client     *Client
 	Agent      *core.Agent
@@ -22,353 +21,29 @@ type Bot struct {
 	Provider   string
 	AuthMethod string
 	CWD        string
-	// Save persists cfg to bot.json. Called whenever the bot pairs
-	// with a new allowed user or advances LastUpdateID.
-	Save func(Config) error
-	// RefreshCreds is called before every turn to pick up newly
-	// refreshed OAuth tokens. Optional; when nil, the bot uses the
-	// credential it was built with. Implementations typically call
-	// agent.ResolveCredentialFull which auto-refreshes expired tokens.
+	Save       func(Config) error
 	RefreshCreds func() error
 
-	mu           sync.Mutex
-	busy         bool
-	activeCtx    context.CancelFunc
-	queue        []queuedTurn
-	lastCtxInput int
+	runner  *bot.Runner
+	adapter *Adapter
 }
 
-// queuedTurn is an inbound DM waiting to become a prompt.
-type queuedTurn struct {
-	chatID    int64
-	messageID int
-	prompt    string
-	images    []provider.ImageBlock
-}
-
-// Run drives the bot. Returns when ctx is cancelled or GetMe fails.
+// Run starts the bot.  It constructs the adapter and runner on first
+// call, then delegates to runner.Run.
 func (b *Bot) Run(ctx context.Context) error {
-	if b.Config.BotToken == "" {
-		return fmt.Errorf("no bot token configured; run `zot bot setup` first")
+	if b.adapter == nil {
+		b.adapter = NewAdapter(b.Client, &b.Config, b.Save)
 	}
-	me, err := b.Client.GetMe(ctx)
-	if err != nil {
-		return fmt.Errorf("getMe: %w", err)
+	if b.runner == nil {
+		b.runner = bot.NewRunner(b.adapter, b.Agent, bot.Config{
+			ZotHome:      b.ZotHome,
+			Provider:     b.Provider,
+			AuthMethod:   b.AuthMethod,
+			CWD:          b.CWD,
+			RefreshCreds: b.RefreshCreds,
+		})
 	}
-	// Keep the stored username/id in sync with the actual bot.
-	if b.Config.BotID != me.ID || b.Config.BotUsername != me.Username {
-		b.Config.BotID = me.ID
-		b.Config.BotUsername = me.Username
-		_ = b.Save(b.Config)
-	}
-
-	fmt.Printf("telegram bridge online as @%s (id=%d)\n", me.Username, me.ID)
-	if b.Config.AllowedUserID == 0 {
-		fmt.Println("no user paired yet — send /start to the bot from Telegram to claim it")
-	} else {
-		fmt.Printf("paired with telegram user id %d\n", b.Config.AllowedUserID)
-	}
-
-	return b.pollLoop(ctx)
-}
-
-// pollLoop long-polls Telegram for updates and dispatches them.
-func (b *Bot) pollLoop(ctx context.Context) error {
-	backoff := time.Second
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		updates, err := b.Client.GetUpdates(ctx, b.Config.LastUpdateID+1, 30)
-		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			fmt.Fprintln(stderr(), "telegram: getUpdates error:", err)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(backoff):
-			}
-			if backoff < 30*time.Second {
-				backoff *= 2
-			}
-			continue
-		}
-		backoff = time.Second
-		for _, u := range updates {
-			if err := b.handleUpdate(ctx, u); err != nil {
-				fmt.Fprintln(stderr(), "telegram: handleUpdate:", err)
-			}
-			b.Config.LastUpdateID = u.UpdateID
-			_ = b.Save(b.Config)
-		}
-	}
-}
-
-// handleUpdate processes a single Telegram update.
-func (b *Bot) handleUpdate(ctx context.Context, u Update) error {
-	msg := u.Message
-	if msg == nil {
-		msg = u.Edited
-	}
-	if msg == nil || msg.From == nil || msg.From.IsBot {
-		return nil
-	}
-	if msg.Chat.Type != "private" {
-		return nil
-	}
-
-	// Pairing: first user who sends /start claims the bridge.
-	text := strings.TrimSpace(msg.Text)
-	if b.Config.AllowedUserID == 0 {
-		if strings.HasPrefix(text, "/start") {
-			b.Config.AllowedUserID = msg.From.ID
-			_ = b.Save(b.Config)
-			_ = b.Client.SendMessage(ctx, msg.Chat.ID,
-				fmt.Sprintf("paired with @%s. send any message and i'll forward it to zot.", msg.From.Username),
-				msg.MessageID)
-			return nil
-		}
-		_ = b.Client.SendMessage(ctx, msg.Chat.ID,
-			"this bot isn't paired yet. send /start to claim it.",
-			msg.MessageID)
-		return nil
-	}
-
-	// Enforce allowed user.
-	if msg.From.ID != b.Config.AllowedUserID {
-		_ = b.Client.SendMessage(ctx, msg.Chat.ID,
-			"this bot is paired with a different user.",
-			msg.MessageID)
-		return nil
-	}
-
-	// Built-in commands that bypass the agent.
-	switch text {
-	case "/start", "/help":
-		_ = b.Client.SendMessage(ctx, msg.Chat.ID,
-			"send me any message and i'll forward it to zot. attach an image and i'll pass it to the model. commands: /status, /stop, or plain stop.",
-			msg.MessageID)
-		return nil
-	case "/status":
-		return b.sendStatus(ctx, msg.Chat.ID, msg.MessageID)
-	case "/stop":
-		b.cancelActiveTurn(ctx, msg.Chat.ID, msg.MessageID)
-		return nil
-	}
-	if isStopCommand(text) {
-		b.cancelActiveTurn(ctx, msg.Chat.ID, msg.MessageID)
-		return nil
-	}
-
-	// Build the prompt: combine text + caption; download image attachments.
-	prompt := strings.TrimSpace(msg.Text)
-	if msg.Caption != "" {
-		if prompt != "" {
-			prompt += "\n"
-		}
-		prompt += msg.Caption
-	}
-
-	var images []provider.ImageBlock
-	if len(msg.Photo) > 0 {
-		// Photos arrive in multiple sizes; take the largest (last in the slice).
-		largest := msg.Photo[len(msg.Photo)-1]
-		if data, mime, err := b.download(ctx, largest.FileID, ""); err == nil {
-			images = append(images, provider.ImageBlock{MimeType: mime, Data: data})
-		} else {
-			fmt.Fprintln(stderr(), "telegram: download photo:", err)
-		}
-	}
-	if msg.Document != nil && isImageMIME(msg.Document.MimeType) {
-		if data, mime, err := b.download(ctx, msg.Document.FileID, msg.Document.MimeType); err == nil {
-			images = append(images, provider.ImageBlock{MimeType: mime, Data: data})
-		}
-	}
-
-	if prompt == "" && len(images) == 0 {
-		return nil
-	}
-
-	b.mu.Lock()
-	b.queue = append(b.queue, queuedTurn{
-		chatID:    msg.Chat.ID,
-		messageID: msg.MessageID,
-		prompt:    prompt,
-		images:    images,
-	})
-	idle := !b.busy
-	b.mu.Unlock()
-
-	if idle {
-		go b.drainQueue(ctx)
-	}
-	return nil
-}
-
-// drainQueue runs queued turns one at a time until the queue is empty.
-func (b *Bot) drainQueue(parent context.Context) {
-	for {
-		b.mu.Lock()
-		if len(b.queue) == 0 {
-			b.busy = false
-			b.activeCtx = nil
-			b.mu.Unlock()
-			return
-		}
-		t := b.queue[0]
-		b.queue = b.queue[1:]
-		b.busy = true
-		turnCtx, cancel := context.WithCancel(parent)
-		b.activeCtx = cancel
-		b.mu.Unlock()
-
-		if b.RefreshCreds != nil {
-			if err := b.RefreshCreds(); err != nil {
-				fmt.Fprintln(stderr(), "telegram: refresh creds:", err)
-			}
-		}
-		b.runTurn(turnCtx, t)
-		cancel()
-	}
-}
-
-// runTurn sends the queued prompt to the agent and streams the reply.
-func (b *Bot) runTurn(ctx context.Context, t queuedTurn) {
-	stopTyping := b.startTyping(ctx, t.chatID)
-	defer stopTyping()
-
-	var replyBuilder strings.Builder
-	var lastAssistantText string
-	var turnErr error
-
-	sink := func(ev core.AgentEvent) {
-		switch e := ev.(type) {
-		case core.EvTextDelta:
-			replyBuilder.WriteString(e.Delta)
-		case core.EvUsage:
-			b.mu.Lock()
-			if e.Usage.InputTokens > 0 {
-				b.lastCtxInput = e.Usage.InputTokens + e.Usage.CacheReadTokens + e.Usage.CacheWriteTokens
-			}
-			b.mu.Unlock()
-		case core.EvAssistantMessage:
-			var sb strings.Builder
-			for _, c := range e.Message.Content {
-				if tb, ok := c.(provider.TextBlock); ok {
-					if sb.Len() > 0 {
-						sb.WriteString("\n")
-					}
-					sb.WriteString(tb.Text)
-				}
-			}
-			if sb.Len() > 0 {
-				lastAssistantText = sb.String()
-			}
-			replyBuilder.Reset()
-		case core.EvTurnEnd:
-			if e.Err != nil {
-				turnErr = e.Err
-			}
-		}
-	}
-
-	if err := b.Agent.Prompt(ctx, t.prompt, t.images, sink); err != nil {
-		turnErr = err
-	}
-
-	reply := strings.TrimSpace(lastAssistantText)
-	if reply == "" {
-		reply = strings.TrimSpace(replyBuilder.String())
-	}
-	if turnErr != nil && ctx.Err() == nil {
-		reply = "error: " + turnErr.Error()
-	}
-	if reply == "" {
-		reply = "(no reply)"
-	}
-	// Telegram caps messages at 4096 chars. Chunk to be safe.
-	for _, chunk := range chunkMessage(reply, 4000) {
-		if err := b.Client.SendMessage(context.Background(), t.chatID, chunk, 0); err != nil {
-			fmt.Fprintln(stderr(), "telegram: sendMessage:", err)
-			break
-		}
-	}
-}
-
-// startTyping keeps Telegram's "typing..." indicator alive until the
-// returned stop function is called.
-func (b *Bot) startTyping(ctx context.Context, chatID int64) func() {
-	tctx, cancel := context.WithCancel(ctx)
-	go func() {
-		for {
-			_ = b.Client.SendChatAction(tctx, chatID, "typing")
-			select {
-			case <-tctx.Done():
-				return
-			case <-time.After(4 * time.Second):
-			}
-		}
-	}()
-	return cancel
-}
-
-func (b *Bot) cancelActiveTurn(ctx context.Context, chatID int64, replyTo int) {
-	b.mu.Lock()
-	cancel := b.activeCtx
-	b.mu.Unlock()
-	if cancel != nil {
-		cancel()
-		_ = b.Client.SendMessage(ctx, chatID, "cancelled the current turn.", replyTo)
-	} else {
-		_ = b.Client.SendMessage(ctx, chatID, "nothing running.", replyTo)
-	}
-}
-
-// sendStatus describes agent state to the Telegram user.
-func (b *Bot) sendStatus(ctx context.Context, chatID int64, replyTo int) error {
-	b.mu.Lock()
-	busy := b.busy
-	queued := len(b.queue)
-	ctxUsed := b.lastCtxInput
-	providerName := b.Provider
-	authMethod := b.AuthMethod
-	cwd := b.CWD
-	b.mu.Unlock()
-
-	model := b.Agent.Model
-	ctxMax := 0
-	if m, err := provider.FindModel(providerName, model); err == nil {
-		ctxMax = m.ContextWindow
-	}
-	return b.Client.SendMessage(ctx, chatID, FormatStatus(StatusSnapshot{
-		Provider:     providerName,
-		Model:        model,
-		CWD:          cwd,
-		Usage:        b.Agent.Cost(),
-		Subscription: authMethod == "oauth",
-		ContextUsed:  ctxUsed,
-		ContextMax:   ctxMax,
-		Busy:         busy,
-		Queued:       queued,
-	}), replyTo)
-}
-
-// download fetches a file from Telegram and returns bytes + mime.
-func (b *Bot) download(ctx context.Context, fileID, mime string) ([]byte, string, error) {
-	f, err := b.Client.GetFile(ctx, fileID)
-	if err != nil {
-		return nil, "", err
-	}
-	data, err := b.Client.DownloadFile(ctx, f.FilePath)
-	if err != nil {
-		return nil, "", err
-	}
-	if mime == "" {
-		mime = guessImageMIME(f.FilePath)
-	}
-	return data, mime, nil
+	return b.runner.Run(ctx)
 }
 
 // chunkMessage splits s into chunks no larger than limit runes, on line
