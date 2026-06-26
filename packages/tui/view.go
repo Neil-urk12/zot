@@ -138,6 +138,12 @@ type View struct {
 	// False (the default) keeps the bordered box.
 	FlatTools bool
 
+	// CompactUser renders sent user messages as a single quiet gutter
+	// line per wrapped row instead of a tinted bubble with a blank
+	// padding row above and below. False (the default) keeps the
+	// padded, background-tinted bubble.
+	CompactUser bool
+
 	// ExpandAll forces every long tool result to render in full.
 	// Toggled from the tui by ctrl+o. When false, results longer than
 	// ToolCollapseLines collapse to ToolCollapsePreview lines plus a
@@ -641,6 +647,19 @@ func (v *View) renderMessage(m provider.Message, width int, turnOpen bool) []str
 			bar := v.Theme.BG(v.Theme.UserBubbleBG, v.Theme.FG256(v.Theme.Accent, "▌ "))
 			return bar + padded
 		}
+		if v.CompactUser {
+			// Compact: no tinted bubble background and no padding rows.
+			// Each wrapped row is a quiet "▌ text" gutter line, matching
+			// the flat tool-call header so user turns still segment the
+			// chat without the loud panel.
+			innerWidth = width - 2
+			if innerWidth < 1 {
+				innerWidth = 1
+			}
+			row = func(content string) string {
+				return v.Theme.FG256(v.Theme.Accent, "▌ ") + content
+			}
+		}
 		var bubble []string
 		for _, c := range m.Content {
 			switch b := c.(type) {
@@ -656,9 +675,15 @@ func (v *View) renderMessage(m provider.Message, width int, turnOpen bool) []str
 			}
 		}
 		if len(bubble) > 0 {
-			lines = append(lines, row(""))
-			lines = append(lines, bubble...)
-			lines = append(lines, row(""))
+			if v.CompactUser {
+				// No tinted padding rows in compact mode; the inter-message
+				// blank from Build() already gives the turn breathing room.
+				lines = append(lines, bubble...)
+			} else {
+				lines = append(lines, row(""))
+				lines = append(lines, bubble...)
+				lines = append(lines, row(""))
+			}
 		}
 	case provider.RoleAssistant:
 		// Assistant rows: no speaker label either. Prose still gets a

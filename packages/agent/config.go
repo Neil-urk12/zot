@@ -36,6 +36,12 @@ type Config struct {
 	// set ("1"/"true" forces flat, "0"/"false" forces box).
 	ToolRender string `json:"tool_render,omitempty"`
 
+	// CompactInput renders sent user messages as a single quiet gutter
+	// line instead of a padded, background-tinted bubble. nil/false
+	// (the default) keeps the bubble. The ZOT_COMPACT_INPUT env var
+	// overrides this when set.
+	CompactInput *bool `json:"compact_input,omitempty"`
+
 	// QuickModelShortcuts maps slots 1-9 to provider/model pairs used by
 	// Ctrl+1..9. Cmd+1..9 may also work on terminals that forward Super.
 	QuickModelShortcuts []QuickModelShortcut `json:"quick_model_shortcuts,omitempty"`
@@ -119,6 +125,24 @@ func (c Config) FlatToolRender() bool {
 		}
 	}
 	return strings.EqualFold(strings.TrimSpace(c.ToolRender), "flat")
+}
+
+// CompactUserInput reports whether sent user messages should render as
+// a single quiet gutter line instead of a padded, background-tinted
+// bubble. The ZOT_COMPACT_INPUT env var takes precedence over the
+// config when set: "1"/"true"/"yes"/"on" force compact, "0"/"false"/
+// "no"/"off" force the bubble. Otherwise the config's compact_input
+// is consulted (nil/false means the bubble).
+func (c Config) CompactUserInput() bool {
+	if v := strings.TrimSpace(strings.ToLower(os.Getenv("ZOT_COMPACT_INPUT"))); v != "" {
+		switch v {
+		case "1", "true", "yes", "on", "compact":
+			return true
+		case "0", "false", "no", "off", "bubble":
+			return false
+		}
+	}
+	return c.CompactInput != nil && *c.CompactInput
 }
 
 // AuthPath returns the path to auth.json.

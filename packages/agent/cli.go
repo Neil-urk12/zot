@@ -967,6 +967,7 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 		RespectGitignore:           initialCfg.RespectGitignore,
 		ThemeName:                  initialCfg.Theme,
 		FlatTools:                  initialCfg.FlatToolRender(),
+		CompactUser:                initialCfg.CompactUserInput(),
 		ExtensionThemes:            extMgr.ThemeOptions,
 		AutoSwarmSystemAddendum:    AutoSwarmSystemAddendum,
 		SettingsStore:              configSettingsStore{},

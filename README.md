@@ -587,6 +587,27 @@ ZOT_FLAT_TOOLS=0 zot   # boxes, even if config.json says "flat"
 
 Either way, theme colors still drive the rendering (the header uses your accent/foreground, output uses the tool-output color) and `ctrl+o` still expands a truncated result.
 
+## Compact input
+
+By default a message you send renders as a padded, background-tinted bubble: a blank tinted row above and below the text, with a `▌` accent bar down the left. So even a one-line prompt occupies three rows. Set `compact_input` to collapse it to a single quiet `▌ your text` gutter line per wrapped row — no padding rows, no background tint.
+
+```json
+{
+  "compact_input": true
+}
+```
+
+| Value | Effect |
+|---|---|
+| unset / `false` (default) | Padded, background-tinted user bubble. |
+| `true` | One quiet gutter line per wrapped row. |
+
+The `ZOT_COMPACT_INPUT` env var overrides the config for a single run (`1`/`true`/`on`/`compact` force compact; `0`/`false`/`off`/`bubble` force the bubble):
+
+```sh
+ZOT_COMPACT_INPUT=1 zot   # compact, just this run
+```
+
 ## Queued messages
 
 You can keep typing while the agent is working. Pressing `enter` during a turn queues the message instead of interrupting: it shows up above the status bar as `sliding in: <text>` and is delivered as the next user turn the moment the current one finishes. Queue as many as you want; they run in order. `esc` cancels the active turn and drops the queue so a runaway turn doesn't flood you with stale follow-ups; `ctrl+c` while busy arms the exit hint instead of interrupting, a second `ctrl+c` within two seconds exits zot.
